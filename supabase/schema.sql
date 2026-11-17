@@ -1,0 +1,8 @@
+-- ==============================================================================
+-- SafeRoute - Database Schema
+-- Planned for implementation in Stage 2 (Issue A2 - Member A)
+-- Reference: docs/SPEC.md Section 7
+-- Tables to define: profiles, hazard_reports, report_images, verifications,
+--                   comments, escalations, status_history
+-- Extensions: postgis
+-- ==============================================================================

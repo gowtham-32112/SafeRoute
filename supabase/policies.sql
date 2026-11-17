@@ -1,0 +1,11 @@
+-- ==============================================================================
+-- SafeRoute - Row Level Security (RLS) & Storage Policies
+-- Planned for implementation in Stage 2 (Issue A5 - Member A)
+-- Reference: docs/SPEC.md Section 7
+-- Policies to define:
+--   - RLS on all tables
+--   - Authenticated read for reports, images, comments
+--   - User-restricted writes (cannot vote on own reports, only edit own open reports)
+--   - Admin-only escalations and overrides
+--   - Storage bucket security policies for 'hazard-photos'
+-- ==============================================================================

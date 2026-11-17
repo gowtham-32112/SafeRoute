@@ -1,0 +1,10 @@
+-- ==============================================================================
+-- SafeRoute - Database Triggers
+-- Planned for implementation in Stage 2 (Issue A4 - Member A)
+-- Reference: docs/SPEC.md Section 7 & Section 8
+-- Triggers to define:
+--   - On insert or delete in verifications: recompute counts and confidence
+--   - After recompute: set escalation_recommended = true, set status = 'fixed'
+--   - On any status change: insert into status_history
+--   - On user signup: insert into profiles
+-- ==============================================================================

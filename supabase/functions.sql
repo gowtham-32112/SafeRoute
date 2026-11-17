@@ -1,0 +1,9 @@
+-- ==============================================================================
+-- SafeRoute - Stored SQL Functions
+-- Planned for implementation in Stage 2 (Issue A3 - Member A)
+-- Reference: docs/SPEC.md Section 7
+-- Functions to define:
+--   - reports_in_bounds(min_lat, min_lng, max_lat, max_lng, category_filter, status_filter)
+--   - nearby_reports(lat, lng, radius_m, category)
+--   - hazards_near_route(route_geojson, buffer_m)
+-- ==============================================================================

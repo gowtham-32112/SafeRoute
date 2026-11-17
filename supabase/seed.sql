@@ -1,0 +1,9 @@
+-- ==============================================================================
+-- SafeRoute - Seed Data
+-- Planned for implementation in Stage 2 (Issue A6 - Member A with C)
+-- Reference: docs/SPEC.md Section 14
+-- Contents:
+--   - Sample admin user account
+--   - ~40 demo hazard reports around Kukatpally Y Junction
+--   - Verified, escalated, and fixed status samples with is_seed = true
+-- ==============================================================================
