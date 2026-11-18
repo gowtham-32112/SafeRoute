@@ -15,14 +15,16 @@
 --   4. public.report_images AFTER INSERT OR DELETE:
 --        - trg_report_images_recompute_metrics -> recompute_report_metrics()
 --   5. public.hazard_reports BEFORE INSERT OR UPDATE:
---        - trg_hazard_reports_before_write (guarded against recursion via
---          transaction-local setting saferoute.internal_metrics_update)
+--        - trg_hazard_reports_before_write (SECURITY INVOKER; distinguishes
+--          trusted internal recomputation via pg_trigger_depth() > 1 AND
+--          CURRENT_USER NOT IN ('authenticated', 'anon') — zero custom GUCs)
 --   6. public.hazard_reports AFTER UPDATE OF status:
 --        - trg_hazard_reports_log_status_history (fires only when status changes)
 --
 -- Security & Concurrency:
 --   - recompute_report_metrics() locks the target hazard_reports row FOR UPDATE
---     to serialize concurrent verification updates safely.
+--     and recomputes counts from source rows to serialize concurrent updates.
+--   - Zero user-settable custom GUCs are trusted for authorization.
 --   - All SECURITY DEFINER functions fix search_path and revoke PUBLIC execute.
 -- ==============================================================================
 
@@ -177,7 +179,7 @@ DECLARE
     v_new_status TEXT;
     v_fixed_at TIMESTAMPTZ;
 BEGIN
-    -- Lock the parent report row to prevent concurrent verification race conditions
+    -- Lock the parent report row to serialize concurrent verification changes
     SELECT *
     INTO v_report
     FROM public.hazard_reports
@@ -239,26 +241,20 @@ BEGIN
         v_fixed_at := NULL;
     END IF;
 
-    -- Guard against recursive BEFORE UPDATE trigger execution
-    PERFORM set_config('saferoute.internal_metrics_update', 'on', TRUE);
-    BEGIN
-        UPDATE public.hazard_reports
-        SET
-            confirm_count = v_confirm_count,
-            dispute_count = v_dispute_count,
-            fixed_count = v_fixed_count,
-            confidence = v_confidence,
-            severity_score = v_severity_score,
-            escalation_recommended = v_escalation_recommended,
-            status = v_new_status,
-            fixed_at = v_fixed_at,
-            updated_at = NOW()
-        WHERE id = p_report_id;
-    EXCEPTION WHEN OTHERS THEN
-        PERFORM set_config('saferoute.internal_metrics_update', 'off', TRUE);
-        RAISE;
-    END;
-    PERFORM set_config('saferoute.internal_metrics_update', 'off', TRUE);
+    -- Runs as function owner (not authenticated/anon) at pg_trigger_depth() > 1,
+    -- which handle_hazard_report_before_write() recognizes securely without GUCs.
+    UPDATE public.hazard_reports
+    SET
+        confirm_count = v_confirm_count,
+        dispute_count = v_dispute_count,
+        fixed_count = v_fixed_count,
+        confidence = v_confidence,
+        severity_score = v_severity_score,
+        escalation_recommended = v_escalation_recommended,
+        status = v_new_status,
+        fixed_at = v_fixed_at,
+        updated_at = NOW()
+    WHERE id = p_report_id;
 END;
 $$;
 
@@ -366,27 +362,52 @@ CREATE TRIGGER trg_report_images_recompute_metrics
 
 -- ------------------------------------------------------------------------------
 -- 7. Trigger: Hazard Reports BEFORE INSERT / UPDATE (Scoring & Field Protection)
+--
+-- Security architecture:
+--   - Runs SECURITY INVOKER so CURRENT_USER reflects the actual executor:
+--       * Direct client SQL/PostgREST call: CURRENT_USER = 'authenticated',
+--         pg_trigger_depth() = 1.
+--       * Internal recompute_report_metrics() (SECURITY DEFINER, owned by DB
+--         owner): CURRENT_USER NOT IN ('authenticated', 'anon') AND
+--         pg_trigger_depth() > 1.
+--   - No user-settable custom GUC is ever consulted or trusted.
 -- ------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.handle_hazard_report_before_write()
 RETURNS TRIGGER
 LANGUAGE plpgsql
-SECURITY DEFINER
+SECURITY INVOKER
 SET search_path = public, extensions
 AS $$
 DECLARE
-    v_is_internal BOOLEAN;
+    v_is_trusted_internal BOOLEAN;
     v_is_regular_user BOOLEAN;
     v_has_photo BOOLEAN := FALSE;
 BEGIN
-    v_is_internal := (current_setting('saferoute.internal_metrics_update', TRUE) = 'on');
-    v_is_regular_user := (auth.uid() IS NOT NULL AND NOT public.is_admin());
+    v_is_trusted_internal := (
+        pg_trigger_depth() > 1
+        AND CURRENT_USER NOT IN ('authenticated', 'anon')
+    );
+    v_is_regular_user := (
+        CURRENT_USER IN ('authenticated', 'anon')
+        AND NOT public.is_admin()
+    );
 
     IF TG_OP = 'INSERT' THEN
-        NEW.created_at := COALESCE(NEW.created_at, NOW());
         NEW.updated_at := NOW();
 
         IF v_is_regular_user THEN
-            -- Ordinary users cannot forge system or admin-controlled fields on insert
+            -- Reject forged AI or duplicate-detection fields from ordinary users
+            IF NEW.ai_confidence IS NOT NULL
+               OR NEW.ai_suggested_category IS NOT NULL
+               OR NEW.duplicate_of IS NOT NULL THEN
+                RAISE EXCEPTION 'Ordinary users cannot set system-generated AI or duplicate fields'
+                    USING ERRCODE = '42501';
+            END IF;
+
+            -- Enforce trusted server timestamp (blocks backdating & future-dating)
+            NEW.created_at := NOW();
+
+            -- Force safe initial values for system- and admin-controlled fields
             NEW.status := 'open';
             NEW.confirm_count := 0;
             NEW.dispute_count := 0;
@@ -395,6 +416,8 @@ BEGIN
             NEW.escalated_at := NULL;
             NEW.fixed_at := NULL;
             NEW.is_seed := FALSE;
+        ELSE
+            NEW.created_at := COALESCE(NEW.created_at, NOW());
         END IF;
 
         NEW.severity_score := public.calculate_severity_score(
@@ -422,12 +445,13 @@ BEGIN
     -- TG_OP = 'UPDATE'
     NEW.updated_at := NOW();
 
-    -- Skip recursion when invoked internally by recompute_report_metrics()
-    IF v_is_internal THEN
+    -- Trusted nested update from SECURITY DEFINER recompute_report_metrics() only;
+    -- prevents trigger recursion and cannot be forged by authenticated/anon sessions.
+    IF v_is_trusted_internal THEN
         RETURN NEW;
     END IF;
 
-    -- Block ordinary users from modifying system- or admin-controlled columns
+    -- Block ordinary users from modifying system-, AI-, duplicate-, or admin-controlled columns
     IF v_is_regular_user THEN
         IF NEW.reporter_id IS DISTINCT FROM OLD.reporter_id
            OR NEW.status IS DISTINCT FROM OLD.status
@@ -437,11 +461,14 @@ BEGIN
            OR NEW.confirm_count IS DISTINCT FROM OLD.confirm_count
            OR NEW.dispute_count IS DISTINCT FROM OLD.dispute_count
            OR NEW.fixed_count IS DISTINCT FROM OLD.fixed_count
+           OR NEW.ai_confidence IS DISTINCT FROM OLD.ai_confidence
+           OR NEW.ai_suggested_category IS DISTINCT FROM OLD.ai_suggested_category
+           OR NEW.duplicate_of IS DISTINCT FROM OLD.duplicate_of
            OR NEW.escalated_at IS DISTINCT FROM OLD.escalated_at
            OR NEW.fixed_at IS DISTINCT FROM OLD.fixed_at
            OR NEW.is_seed IS DISTINCT FROM OLD.is_seed
            OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
-            RAISE EXCEPTION 'Ordinary users cannot modify system- or admin-controlled report fields'
+            RAISE EXCEPTION 'Ordinary users cannot modify protected system, AI, or admin report fields'
                 USING ERRCODE = '42501';
         END IF;
     END IF;
@@ -557,12 +584,12 @@ CREATE TRIGGER trg_hazard_reports_log_status_history
 CREATE OR REPLACE FUNCTION public.prevent_profile_role_escalation()
 RETURNS TRIGGER
 LANGUAGE plpgsql
-SECURITY DEFINER
+SECURITY INVOKER
 SET search_path = public
 AS $$
 BEGIN
     IF NEW.role IS DISTINCT FROM OLD.role THEN
-        IF auth.uid() IS NOT NULL AND NOT public.is_admin() THEN
+        IF CURRENT_USER IN ('authenticated', 'anon') AND NOT public.is_admin() THEN
             RAISE EXCEPTION 'Only administrators may change profile roles'
                 USING ERRCODE = '42501';
         END IF;

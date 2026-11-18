@@ -116,6 +116,9 @@ CREATE POLICY hazard_reports_insert_own
         AND is_seed = FALSE
         AND escalated_at IS NULL
         AND fixed_at IS NULL
+        AND ai_confidence IS NULL
+        AND ai_suggested_category IS NULL
+        AND duplicate_of IS NULL
     );
 
 DROP POLICY IF EXISTS hazard_reports_insert_admin ON public.hazard_reports;

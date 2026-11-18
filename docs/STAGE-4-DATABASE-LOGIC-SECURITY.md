@@ -1,11 +1,11 @@
 # SafeRoute — Stage 4: Database Logic, Triggers, RLS & Storage Policies (Issues A3–A5)
 
-> - **Document Version**: 1.0.0
+> - **Document Version**: 1.1.0
 > - **Milestone**: Day 1 – Core Loop
 > - **Spec Issues Covered**: `A3` (Spatial Functions), `A4` (Triggers & Business Logic), `A5` (Row-Level Security & Storage Policies)
 > - **Feature Branch**: `feat/backend-A3-A5-database-logic-security`
 > - **Target Supabase Project**: `myaadekzqtubygwhjmab` (`https://myaadekzqtubygwhjmab.supabase.co`)
-> - **Supabase Execution Status**: **PENDING** (SQL files prepared for manual execution in Supabase SQL Editor; live DB verification pending)
+> - **Supabase Execution Status**: **PENDING** (SQL files updated with PR #6 security review fixes; live DB & concurrency verification pending manual execution)
 
 ---
 
@@ -15,10 +15,11 @@ Stage 4 builds on the merged Stage 3 schema ([supabase/schema.sql](../supabase/s
 
 - **Delivered**:
   - [supabase/functions.sql](../supabase/functions.sql) (A3 — PostGIS spatial functions)
-  - [supabase/triggers.sql](../supabase/triggers.sql) (A4 — Verification counts, confidence, severity scoring, fixed rule, escalation recommendation, status history, self-vote & role-escalation guards)
+  - [supabase/triggers.sql](../supabase/triggers.sql) (A4 — Verification counts, confidence, severity scoring, fixed rule, escalation recommendation, status history, self-vote/role guards, GUC-free trigger security, AI/duplicate & timestamp enforcement)
   - [supabase/policies.sql](../supabase/policies.sql) (A5 — RLS on all 7 public tables + Storage policies on private bucket `hazard-photos`)
-  - [tests/test_stage4_sql.py](../tests/test_stage4_sql.py) (Automated contract, formula parity, and security-invariant pytest suite)
-  - [tests/stage4_manual_verification.sql](../tests/stage4_manual_verification.sql) (Safe `BEGIN ... ROLLBACK` live verification script for Supabase SQL Editor)
+  - [tests/test_stage4_sql.py](../tests/test_stage4_sql.py) (Automated static SQL contract, formula parity, and security-invariant pytest suite)
+  - [tests/test_stage4_pg_integration.py](../tests/test_stage4_pg_integration.py) (Real multi-connection PostgreSQL integration & concurrency pytest suite for disposable PostgreSQL+PostGIS databases via `TEST_DATABASE_URL`)
+  - [tests/stage4_manual_verification.sql](../tests/stage4_manual_verification.sql) (Safe `BEGIN ... ROLLBACK` live verification script for Supabase SQL Editor covering all 15 security & functional regression scenarios)
 - **Preserved Untouched**: `supabase/schema.sql`, `supabase/seed.sql`, and all `app/` FastAPI/frontend files.
 
 ---
@@ -49,10 +50,12 @@ All three functions are `SECURITY INVOKER` (so PostgreSQL RLS is always enforced
 | 2 | `public.verifications` | `BEFORE INSERT OR UPDATE` | `trg_verifications_prevent_self_vote` | Blocks voting on own report (`reporter_id = NEW.user_id`) and reassigning `report_id`/`user_id`. |
 | 3 | `public.verifications` | `AFTER INSERT OR DELETE` | `trg_verifications_recompute_metrics` | Calls `recompute_report_metrics()` to refresh counts, confidence, severity, escalation flag, and fixed status. |
 | 4 | `public.report_images` | `AFTER INSERT OR DELETE` | `trg_report_images_recompute_metrics` | Recalculates severity & escalation flag when `'evidence'` photos are added or removed. |
-| 5 | `public.hazard_reports` | `BEFORE INSERT OR UPDATE` | `trg_hazard_reports_before_write` | Computes initial/updated severity & confidence, maintains `updated_at`/`escalated_at`/`fixed_at`, blocks ordinary users from altering system/admin columns, and skips internal recursion via `saferoute.internal_metrics_update`. |
+| 5 | `public.hazard_reports` | `BEFORE INSERT OR UPDATE` | `trg_hazard_reports_before_write` | Runs `SECURITY INVOKER`: computes initial/updated severity & confidence, forces `created_at = NOW()` for ordinary users, rejects forged `ai_confidence`/`ai_suggested_category`/`duplicate_of` on INSERT and UPDATE, blocks protected column mutations, and allows nested internal recomputation **only** when `pg_trigger_depth() > 1 AND CURRENT_USER NOT IN ('authenticated', 'anon')` (zero custom GUCs). |
 | 6 | `public.hazard_reports` | `AFTER UPDATE OF status` | `trg_hazard_reports_log_status_history` | Fires strictly `WHEN (OLD.status IS DISTINCT FROM NEW.status)` to insert an immutable audit row into `public.status_history`. |
 
-### Business Rules Enforced
+### Business Rules & Security Hardening Enforced
+- **No User-Settable GUC Bypass**: Zero custom PostgreSQL session settings (`set_config` / `current_setting`) are trusted for trigger authorization. Because `handle_hazard_report_before_write()` runs `SECURITY INVOKER`, a direct client `UPDATE` runs with `CURRENT_USER = 'authenticated'` and `pg_trigger_depth() = 1`, whereas internal recomputation from `SECURITY DEFINER` `recompute_report_metrics()` runs with `CURRENT_USER = <db_owner>` (not `authenticated`/`anon`) and `pg_trigger_depth() >= 2`.
+- **Protected AI, Duplicate & Timestamp Fields**: Ordinary authenticated users cannot set `ai_confidence`, `ai_suggested_category`, or `duplicate_of` on `INSERT` (enforced in both trigger and `hazard_reports_insert_own` RLS policy) or modify them on `UPDATE`; `created_at` is unconditionally forced to `NOW()` on `INSERT` for ordinary users (preventing backdating and future-dating). Trusted backend (`service_role`) and `admin` workflows remain fully supported.
 - **Severity Formula (`public.calculate_severity_score`)**:
   - Type weights: `pothole=40`, `road_break=40`, `footpath=35`, `streetlight=25`, `other=15`.
   - Evidence: photo (`kind = 'evidence'`) `+10`; `ai_confidence > 0.7` `+10`.
@@ -65,7 +68,7 @@ All three functions are `SECURITY INVOKER` (so PostgreSQL RLS is always enforced
   - `high`: `>= 3` confirmations AND `confirm_count > dispute_count`.
 - **Fixed Rule**: At `>= 2` distinct eligible `'fixed'` votes, status automatically becomes `'fixed'` with `fixed_at = NOW()`. If a `'fixed'` vote is deleted and `fixed_count` drops below `2`, status reverts to `'escalated'` (if `escalated_at IS NOT NULL`) or `'open'` and clears `fixed_at`. Admins retain full status override capability.
 - **Escalation Recommendation**: `escalation_recommended = (confirm_count >= 5 OR severity_score >= 70)`. Actual escalation (`status = 'escalated'` + `escalations` insert) remains admin-only.
-- **Concurrency & Recursion Safety**: `recompute_report_metrics()` acquires `SELECT ... FOR UPDATE` on the parent `hazard_reports` row to serialize concurrent votes and uses transaction-local `set_config('saferoute.internal_metrics_update', 'on', TRUE)` to prevent trigger recursion.
+- **Concurrency Safety**: `recompute_report_metrics()` acquires `SELECT ... FOR UPDATE` on the parent `hazard_reports` row and recalculates exact counts from `public.verifications` rather than using relative increments.
 
 ---
 
@@ -136,12 +139,27 @@ Do **not** drop tables or reset the project. Execute the three Stage 4 SQL files
 *(All three scripts are idempotent and safe to rerun.)*
 
 ### Live Verification Steps (After Running the 3 Files Above)
-1. **Transactional Database Verification (Zero Persisted Data)**:
+1. **Transactional Security & Functional Verification (Zero Persisted Data)**:
    - Run [tests/stage4_manual_verification.sql](../tests/stage4_manual_verification.sql) in the Supabase SQL Editor.
-   - It executes assertions for A3 spatial functions, A4 triggers (severity, confidence, self-vote, duplicate vote, 2-vote fixed rule, 5-confirm/70-severity escalation recommendation, status history), and A5 RLS roles (`anon`, User A, User B, Admin) inside `BEGIN; ... ROLLBACK;`.
-   - Confirm notice: `ALL STAGE 4 LIVE TRANSACTIONAL ASSERTIONS PASSED! Rolling back test fixtures.`
-2. **Manual Storage Policy Verification**:
-   - Using two test authenticated accounts (or Supabase client in a local non-committed script):
+   - Exercises all 15 security & functional regression scenarios inside `BEGIN; ... ROLLBACK;` (GUC bypass rejection across all 10 protected columns, AI/duplicate forgery rejection on INSERT & UPDATE, backdated/future `created_at` forcing to `NOW()`, legitimate edits, verification & evidence-image recomputation, A3 spatial queries, and A5 RLS roles).
+   - Confirm notice: `ALL STAGE 4 SECURITY & FUNCTIONAL ASSERTIONS PASSED! Rolling back test fixtures.`
+2. **Reproducible Multi-Connection Concurrency Verification**:
+   - **Automated (Disposable PostgreSQL + PostGIS)**:
+     ```powershell
+     set TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/saferoute_test
+     python -m pytest tests/test_stage4_pg_integration.py -v
+     ```
+     Executes multi-threaded concurrent PostgreSQL connections using `threading.Barrier` (5 concurrent confirmations, 2 concurrent fixed votes, and concurrent fixed-vote `DELETE` + dispute `INSERT`).
+   - **Manual Two-Session Concurrency Test** (if testing interactively in two separate `psql` / SQL sessions against a disposable test report `<R>`):
+     - *Session 1*: `BEGIN; INSERT INTO public.verifications (report_id, user_id, vote) VALUES ('<R>', '<user_b>', 'fixed');` *(holds `FOR UPDATE` row lock on `<R>` — do not commit yet)*
+     - *Session 2*: `BEGIN; INSERT INTO public.verifications (report_id, user_id, vote) VALUES ('<R>', '<user_c>', 'fixed');` *(observe Session 2 cleanly blocks waiting on Session 1's `FOR UPDATE` lock)*
+     - *Session 1*: `COMMIT;` *(Session 2 immediately unblocks, sees both committed fixed votes, sets `fixed_count = 2` and `status = 'fixed'`)*
+     - *Session 2*: `COMMIT;`
+     - Verify `SELECT confirm_count, dispute_count, fixed_count, status, fixed_at FROM public.hazard_reports WHERE id = '<R>';` returns `fixed_count = 2, status = 'fixed'`.
+     - Repeat with Session 1 deleting `<user_c>`'s `'fixed'` vote while Session 2 concurrently inserts a `'confirm'` vote; after both commit, verify `fixed_count = 1`, `status = 'open'`, and `confirm_count` incremented accurately with zero lost updates.
+     - Delete the disposable test report `<R>` afterwards.
+3. **Manual Storage Policy Verification**:
+   - Using two test authenticated accounts, an anonymous client, and an admin account:
      - Confirm User A can upload to `<user_a_uuid>/<report_uuid>/test.jpg` in `hazard-photos`.
      - Confirm User A is **rejected** when uploading to `<user_b_uuid>/<report_uuid>/test.jpg`.
      - Confirm an anonymous client is **rejected** on both upload and download.
@@ -154,7 +172,8 @@ Do **not** drop tables or reset the project. Execute the three Stage 4 SQL files
 
 | Verification Layer | Status | Details |
 |---|:---:|---|
-| **Static SQL & Security Review** | **PASS** | Reviewed syntax, `42P13` parameter safety, GIST index usage, `FOR UPDATE` locking, recursion guards, zero-recursion RLS helpers, and Storage path rules. |
-| **Local Automated Tests (`pytest tests/ -v`)** | **PASS** | Stage 1 health tests + Stage 3 schema tests + Stage 4 SQL contract & formula parity tests. |
+| **Static SQL & Security Review** | **PASS** | Zero custom GUCs; `SECURITY INVOKER` + `pg_trigger_depth() > 1` + `CURRENT_USER`; AI/duplicate/timestamp enforcement; GIST index usage; `FOR UPDATE` locking; zero-recursion RLS & Storage path guards. |
+| **Local Automated Static & Formula Tests (`tests/test_stage4_sql.py`)** | **PASS** | All Stage 1, Stage 3, and Stage 4 static/formula pytest tests pass locally. |
+| **Local PostgreSQL Integration & Concurrency Tests (`tests/test_stage4_pg_integration.py`)** | **SKIPPED LOCALLY (PENDING)** | No local PostgreSQL instance or running Docker daemon is available in this workstation environment. Concurrency has **not** yet been validated live; run against a disposable PostgreSQL+PostGIS database via `TEST_DATABASE_URL` or use the Two-Session Manual Concurrency Test above. |
 | **Supabase SQL Execution (`functions.sql`, `policies.sql`, `triggers.sql`)** | **PENDING** | Prepared for manual execution by project owner in Supabase SQL Editor. |
 | **Live Supabase Verification (`stage4_manual_verification.sql` & Storage checks)** | **PENDING** | Run after executing the three Stage 4 SQL files above. |

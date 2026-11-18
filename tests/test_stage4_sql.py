@@ -196,13 +196,28 @@ def test_a4_triggers_and_functions_defined():
         )
 
 
-def test_a4_concurrency_lock_recursion_guard_and_security_definer_safety():
+def test_a4_concurrency_lock_no_guc_bypass_and_security_definer_safety():
     sql = _read_code(TRIGGERS_SQL)
     # Row-level locking against concurrent verification races
     assert "FOR UPDATE;" in sql
-    # Recursion guard around internal metrics update
-    assert "set_config('saferoute.internal_metrics_update', 'on', TRUE)" in sql
-    assert "current_setting('saferoute.internal_metrics_update', TRUE) = 'on'" in sql
+
+    # Critical security fix: ZERO user-settable custom GUC bypasses anywhere
+    assert "saferoute.internal_metrics_update" not in sql
+    assert "set_config(" not in sql
+    assert "current_setting(" not in sql
+
+    # Trusted internal update guard uses SECURITY INVOKER + pg_trigger_depth() + CURRENT_USER
+    before_write_match = re.search(
+        r"CREATE\s+OR\s+REPLACE\s+FUNCTION\s+public\.handle_hazard_report_before_write\s*\(\)(.*?)\$\$\s*;",
+        sql,
+        re.IGNORECASE | re.DOTALL,
+    )
+    assert before_write_match is not None
+    bw_body = before_write_match.group(1)
+    assert re.search(r"SECURITY\s+INVOKER", bw_body, re.IGNORECASE)
+    assert "pg_trigger_depth() > 1" in bw_body
+    assert "CURRENT_USER NOT IN ('authenticated', 'anon')" in bw_body
+
     # Status history trigger only fires on actual status transition
     assert "WHEN (OLD.status IS DISTINCT FROM NEW.status)" in sql
     # Distinct eligible voters counted
@@ -221,6 +236,57 @@ def test_a4_concurrency_lock_recursion_guard_and_security_definer_safety():
     )
     total_sec_def = len(re.findall(r"SECURITY\s+DEFINER", sql, re.IGNORECASE))
     assert len(sec_def_blocks) == total_sec_def and total_sec_def > 0
+
+
+def test_a4_protects_all_system_ai_duplicate_and_timestamp_fields():
+    sql = _read_code(TRIGGERS_SQL)
+    bw_match = re.search(
+        r"CREATE\s+OR\s+REPLACE\s+FUNCTION\s+public\.handle_hazard_report_before_write\s*\(\)(.*?)\$\$\s*;",
+        sql,
+        re.IGNORECASE | re.DOTALL,
+    )
+    assert bw_match is not None
+    bw_body = bw_match.group(1)
+
+    # On INSERT: ordinary users cannot set AI/duplicate fields and created_at is forced to NOW()
+    assert "NEW.ai_confidence IS NOT NULL" in bw_body
+    assert "NEW.ai_suggested_category IS NOT NULL" in bw_body
+    assert "NEW.duplicate_of IS NOT NULL" in bw_body
+    assert "NEW.created_at := NOW();" in bw_body
+
+    # On UPDATE: every protected column is checked via IS DISTINCT FROM OLD
+    protected_columns = [
+        "reporter_id",
+        "status",
+        "escalation_recommended",
+        "severity_score",
+        "confidence",
+        "confirm_count",
+        "dispute_count",
+        "fixed_count",
+        "ai_confidence",
+        "ai_suggested_category",
+        "duplicate_of",
+        "escalated_at",
+        "fixed_at",
+        "is_seed",
+        "created_at",
+    ]
+    for col in protected_columns:
+        assert f"NEW.{col} IS DISTINCT FROM OLD.{col}" in bw_body, (
+            f"Missing UPDATE protection for column '{col}'"
+        )
+
+    # Defense-in-depth in RLS INSERT policy as well
+    pol_sql = _read_code(POLICIES_SQL)
+    ins_pol = re.search(
+        r"CREATE\s+POLICY\s+hazard_reports_insert_own[\s\S]*?;",
+        pol_sql,
+        re.IGNORECASE,
+    )
+    assert ins_pol is not None
+    for field in ["ai_confidence IS NULL", "ai_suggested_category IS NULL", "duplicate_of IS NULL"]:
+        assert field in ins_pol.group(0)
 
 
 @pytest.mark.parametrize(
