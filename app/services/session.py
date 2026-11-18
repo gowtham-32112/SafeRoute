@@ -3,6 +3,7 @@
 import hmac
 import secrets
 from typing import Optional
+from urllib.parse import urlparse
 
 from fastapi import Request, Response
 
@@ -162,3 +163,90 @@ def verify_csrf_double_submit(
     if not cookie_token or not candidate:
         return False
     return hmac.compare_digest(cookie_token, candidate)
+
+
+def _normalize_origin(raw_value: str) -> Optional[tuple[str, str, int]]:
+    """Parse an Origin/Referer URL into normalized (scheme, host, port)."""
+    cleaned = raw_value.strip()
+    if not cleaned or cleaned.lower() == "null":
+        return None
+    parsed = urlparse(cleaned)
+    scheme = parsed.scheme.lower()
+    if scheme not in ("http", "https") or not parsed.hostname:
+        return None
+    host = parsed.hostname.lower()
+    try:
+        port = parsed.port or (443 if scheme == "https" else 80)
+    except ValueError:
+        return None
+    return scheme, host, port
+
+
+def verify_same_origin(request: Request) -> bool:
+    """Validate Origin or Referer header against the request's target origin.
+
+    - Rejects explicit 'null' origins or cross-origin Origin/Referer headers.
+    - Returns True when both Origin and Referer headers are absent so callers
+      rely on the double-submit CSRF token rather than breaking privacy-stripped
+      or non-browser clients.
+    """
+    origin_header = request.headers.get("origin")
+    referer_header = request.headers.get("referer")
+    source_header = origin_header if origin_header is not None else referer_header
+    if source_header is None:
+        return True
+
+    source_origin = _normalize_origin(source_header)
+    if source_origin is None:
+        return False
+
+    host_header = request.headers.get("host", "").strip()
+    target_url = (
+        f"{request.url.scheme}://{host_header}"
+        if host_header
+        else f"{request.url.scheme}://{request.url.netloc}"
+    )
+    target_origin = _normalize_origin(target_url)
+    if target_origin is None:
+        return False
+
+    return source_origin == target_origin
+
+
+def is_browser_auth_csrf_subject(
+    request: Request,
+    app_settings: Optional[Settings] = None,
+) -> bool:
+    """Return True when a pre-auth request (login/signup) must pass CSRF token checks.
+
+    Applies to:
+    - HTML form submissions (application/x-www-form-urlencoded, multipart/form-data)
+    - HTMX browser requests (HX-Request: true)
+    - Requests carrying browser Origin/Referer headers
+    - Requests carrying any SafeRoute CSRF or auth cookies
+
+    Pure non-browser JSON API requests without cookies or browser origin headers
+    are excluded from cookie-based double-submit CSRF requirements.
+    """
+    cfg = app_settings or settings
+    content_type = request.headers.get("content-type", "").lower()
+    if (
+        "application/x-www-form-urlencoded" in content_type
+        or "multipart/form-data" in content_type
+    ):
+        return True
+
+    if request.headers.get("hx-request", "").lower() == "true":
+        return True
+
+    if request.headers.get("origin") is not None or request.headers.get("referer") is not None:
+        return True
+
+    return any(
+        name in request.cookies
+        for name in (
+            cfg.CSRF_COOKIE_NAME,
+            cfg.ACCESS_COOKIE_NAME,
+            cfg.REFRESH_COOKIE_NAME,
+        )
+    )

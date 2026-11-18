@@ -2,8 +2,18 @@
 
 from typing import Literal, Optional
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+DEFAULT_DEV_SECRET_KEY = "dev-secret-key-change-in-production"
+MIN_PRODUCTION_SECRET_KEY_LENGTH = 32
+_WEAK_SECRET_MARKERS = (
+    "dev-secret",
+    "change-in-production",
+    "changeme",
+    "placeholder",
+    "your-random",
+)
 
 
 class Settings(BaseSettings):
@@ -18,7 +28,7 @@ class Settings(BaseSettings):
     VISION_API_KEY: str = ""
 
     # Application Security & Environment
-    SECRET_KEY: str = "dev-secret-key-change-in-production"
+    SECRET_KEY: str = DEFAULT_DEV_SECRET_KEY
     ENVIRONMENT: str = "development"
 
     # Session & Cookie Security
@@ -71,6 +81,27 @@ class Settings(BaseSettings):
         if not value:
             return "development"
         return str(value).strip().lower()
+
+    @model_validator(mode="after")
+    def _validate_production_secret_key(self) -> "Settings":
+        """Reject default or weak SECRET_KEY values in staging/production."""
+        if not self.is_production:
+            return self
+
+        secret = self.SECRET_KEY.strip()
+        lowered = secret.lower()
+        is_weak = (
+            not secret
+            or secret == DEFAULT_DEV_SECRET_KEY
+            or len(secret) < MIN_PRODUCTION_SECRET_KEY_LENGTH
+            or any(marker in lowered for marker in _WEAK_SECRET_MARKERS)
+        )
+        if is_weak:
+            raise ValueError(
+                "A strong non-default SECRET_KEY (minimum 32 characters) "
+                "is required when ENVIRONMENT is production or staging."
+            )
+        return self
 
     @property
     def is_production(self) -> bool:

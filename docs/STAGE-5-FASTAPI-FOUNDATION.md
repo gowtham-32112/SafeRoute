@@ -62,19 +62,24 @@ Google OAuth remains disabled; Supabase Auth (email + password) is the sole iden
 | `GET /` | Public | Welcome response (`status: "active"`). |
 | `GET /health` | Public | Health check returning `{"status": "healthy", "application": "SafeRoute"}`. |
 | `GET /auth/csrf` | Public | Issues `sr_csrf_token` cookie for browser/HTMX forms. |
-| `POST /auth/signup` | Public | Validates email/password, registers via Supabase Auth (never sends `role` metadata), sets HTTP-only cookies if immediate session is returned, or reports `email_confirmation_required: true`. |
-| `POST /auth/login` | Public | Authenticates via Supabase Auth, loads trusted role from `public.profiles`, sets HTTP-only session cookies, and returns user summary (or `303 -> /map` for HTML forms). Never returns raw tokens in JSON/HTML. |
-| `POST /auth/logout` | CSRF-protected (cookies) | Validates double-submit CSRF token for cookie sessions, revokes Supabase session via stateless `/auth/v1/logout`, clears auth/CSRF cookies, and returns `200` (or `303 -> /login` for HTML forms). |
+| `POST /auth/signup` | Public (CSRF-protected for browsers) | Validates Origin/Referer and pre-auth double-submit CSRF token for browser/form/HTMX/cookie requests, registers via Supabase Auth (never sends `role` metadata), rotates CSRF cookie and sets HTTP-only cookies if immediate session is returned, or reports `email_confirmation_required: true`. |
+| `POST /auth/login` | Public (CSRF-protected for browsers) | Validates Origin/Referer and pre-auth double-submit CSRF token for browser/form/HTMX/cookie requests, authenticates via Supabase Auth, loads trusted role from `public.profiles`, rotates CSRF cookie and issues HTTP-only session cookies (or `303 -> /map` for HTML forms). Never returns raw tokens in JSON/HTML. |
+| `POST /auth/logout` | CSRF-protected (cookies/forms/HTMX) | Validates Origin/Referer and double-submit CSRF token for cookie/form/HTMX requests (pure Bearer API clients exempt), revokes Supabase session via stateless `/auth/v1/logout`, clears auth/CSRF cookies, and returns `200` (or `303 -> /login` for HTML forms). |
 | `GET /auth/me` | Authenticated (`get_current_user`) | Validates Supabase JWT (transparently refreshing expired cookie sessions when possible), loads trusted profile, returns `UserPublicResponse`. Redirects unauthenticated browsers (`Accept: text/html` or `HX-Request: true`) to `/login`; returns `401` for API clients. |
 | `GET /auth/admin-check` | Admin-Only (`require_admin`) | Enforces `public.profiles.role == 'admin'`. Returns `403 Forbidden` for ordinary users and `401` / `303 -> /login` for unauthenticated callers. |
 
 ---
 
-## 5. Session Security & Local Development Differences
+## 5. Session Security, CSRF & Production Secret Validation
 
 - **Cookie Flags**:
-  - `sr_access_token` and `sr_refresh_token`: `HttpOnly=True`, `SameSite=Lax`, `Path=/`, `Secure=True` in `production`/`staging` (`Secure=False` on local HTTP `development` so `http://127.0.0.1:8000` works cleanly).
-  - `sr_csrf_token`: `HttpOnly=False`, `SameSite=Lax`, verified in constant time (`hmac.compare_digest`) via `X-CSRF-Token` header or `csrf_token` form field on cookie-authenticated state-changing requests.
+  - `sr_access_token` and `sr_refresh_token`: `HttpOnly=True`, `SameSite=Lax`, `Path=/`, `Secure=True` automatically in `production`/`staging` (`Secure=False` on local HTTP `development` so `http://127.0.0.1:8000` works cleanly).
+  - `sr_csrf_token`: `HttpOnly=False`, `SameSite=Lax`, strictly separate from auth tokens (never accepted for authentication), rotated upon successful login/signup to prevent pre-auth CSRF fixation.
+- **Defense-in-Depth CSRF (`require_auth_csrf` & `require_csrf`)**:
+  - **Origin / Referer Check**: Explicitly rejects cross-origin `Origin`/`Referer` headers and `"null"` origins on `POST /auth/login`, `POST /auth/signup`, `POST /auth/logout`, and future state-changing routes; safely falls through to double-submit token validation when both headers are absent.
+  - **Pre-Auth & Post-Auth Double-Submit Token**: Constant-time `hmac.compare_digest` verification (`sr_csrf_token` cookie vs `X-CSRF-Token` header or `csrf_token` form field) is enforced on unauthenticated browser form/HTMX login & signup requests as well as authenticated cookie/form/HTMX requests.
+  - **Bearer-Token API Compatibility**: Pure non-browser API clients using `Authorization: Bearer <token>` without auth cookies or cross-origin browser headers are not required to maintain browser CSRF cookies.
+- **Production `SECRET_KEY` Guard**: `Settings` rejects empty, default (`dev-secret-key-change-in-production`), placeholder, or `< 32`-character `SECRET_KEY` values whenever `ENVIRONMENT` is `production` or `staging`, without echoing the secret in error messages. Local `development` continues working cleanly out of the box.
 - **Role Integrity**: Roles are read solely from `public.profiles` under the user's validated JWT. Missing or invalid profile records fail closed with `403 Forbidden`. No admin email or UUID is hardcoded anywhere in application code.
 - **Error Redaction**: Global exception handlers return consistent `401`, `403`, `404`, `500`, and `503` JSON responses without stack traces, raw tokens, or credentials.
 

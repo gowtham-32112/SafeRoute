@@ -71,15 +71,54 @@ def _make_mock_profile_client(profile_data):
 
 
 def test_settings_cookie_security_defaults_by_environment():
+    strong_secret = "s" * 48
     dev = _test_settings(ENVIRONMENT="development", COOKIE_SECURE=None)
-    prod = _test_settings(ENVIRONMENT="production", COOKIE_SECURE=None)
-    staging = _test_settings(ENVIRONMENT="staging", COOKIE_SECURE=None)
+    prod = _test_settings(
+        ENVIRONMENT="production",
+        COOKIE_SECURE=None,
+        SECRET_KEY=strong_secret,
+    )
+    staging = _test_settings(
+        ENVIRONMENT="staging",
+        COOKIE_SECURE=None,
+        SECRET_KEY=strong_secret,
+    )
     forced_true = _test_settings(ENVIRONMENT="development", COOKIE_SECURE=True)
 
     assert dev.use_secure_cookies is False
     assert prod.use_secure_cookies is True
     assert staging.use_secure_cookies is True
     assert forced_true.use_secure_cookies is True
+
+
+def test_production_and_staging_reject_default_or_weak_secret_key():
+    from pydantic import ValidationError
+    from app.config import DEFAULT_DEV_SECRET_KEY
+
+    # Development allows default SECRET_KEY
+    dev_cfg = _test_settings(ENVIRONMENT="development", SECRET_KEY=DEFAULT_DEV_SECRET_KEY)
+    assert dev_cfg.SECRET_KEY == DEFAULT_DEV_SECRET_KEY
+
+    # Production rejects default development SECRET_KEY without leaking it in error
+    with pytest.raises(ValidationError) as exc_prod:
+        _test_settings(ENVIRONMENT="production", SECRET_KEY=DEFAULT_DEV_SECRET_KEY)
+    assert DEFAULT_DEV_SECRET_KEY not in str(exc_prod.value)
+
+    # Staging rejects default development SECRET_KEY
+    with pytest.raises(ValidationError):
+        _test_settings(ENVIRONMENT="staging", SECRET_KEY=DEFAULT_DEV_SECRET_KEY)
+
+    # Production rejects short/weak secret keys
+    with pytest.raises(ValidationError) as exc_short:
+        _test_settings(ENVIRONMENT="production", SECRET_KEY="too-short-key")
+    assert "too-short-key" not in str(exc_short.value)
+
+    # Production and staging accept a strong >= 32-char non-default secret
+    strong = "a9F4kL2mN8pQ1rS6tU3vW7xY0zB5cD8eF2gH9jK4"
+    prod_ok = _test_settings(ENVIRONMENT="production", SECRET_KEY=strong)
+    staging_ok = _test_settings(ENVIRONMENT="staging", SECRET_KEY=strong)
+    assert prod_ok.is_production is True
+    assert staging_ok.is_production is True
 
 
 def test_supabase_client_rejects_missing_or_placeholder_env():
@@ -254,10 +293,18 @@ def test_login_success_sets_cookies_and_browser_form_redirects_to_map():
         assert resp_json.json()["user"]["role"] == "user"
         assert "login-access-jwt" not in resp_json.text
 
-        # Browser HTML form login redirects to /map
-        resp_form = client.post(
+        # Browser HTML form login with valid pre-auth CSRF cookie redirects to /map
+        browser_client = TestClient(app)
+        csrf_resp = browser_client.get("/auth/csrf")
+        csrf_token = csrf_resp.json()["csrf_token"]
+
+        resp_form = browser_client.post(
             "/auth/login",
-            data={"email": "alice@example.com", "password": "StrongPassword123"},
+            data={
+                "email": "alice@example.com",
+                "password": "StrongPassword123",
+                "csrf_token": csrf_token,
+            },
             headers={"Accept": "text/html"},
             follow_redirects=False,
         )
@@ -533,3 +580,248 @@ def test_consistent_404_and_redacted_500_error_responses():
     assert r_500.status_code == 500
     assert r_500.json() == {"detail": "An internal server error occurred."}
     assert "SENSITIVE_DB_CONNECTION_STRING_LEAK" not in r_500.text
+
+
+# ==============================================================================
+# 5. Pre-Auth Login/Signup CSRF, Origin/Referer & Bearer API Tests
+# ==============================================================================
+
+
+def _mock_auth_success():
+    """Return mocked auth_client and profile_client for login/signup CSRF tests."""
+    auth_client = MagicMock()
+    session_obj = SimpleNamespace(
+        access_token="jwt-csrf-test-access",
+        refresh_token="jwt-csrf-test-refresh",
+        expires_in=3600,
+    )
+    user_obj = SimpleNamespace(id="user-csrf-1", email="csrf@example.com")
+    auth_client.auth.sign_in_with_password.return_value = SimpleNamespace(
+        user=user_obj, session=session_obj
+    )
+    auth_client.auth.sign_up.return_value = SimpleNamespace(
+        user=user_obj, session=session_obj
+    )
+    profile_client = _make_mock_profile_client(
+        {"id": "user-csrf-1", "full_name": "CSRF User", "role": "user"}
+    )
+    return auth_client, profile_client
+
+
+def test_login_form_csrf_missing_invalid_and_valid():
+    auth_client, profile_client = _mock_auth_success()
+
+    with (
+        patch("app.services.auth.get_supabase_client", return_value=auth_client),
+        patch("app.services.auth.create_authenticated_supabase_client", return_value=profile_client),
+    ):
+        client = TestClient(app)
+
+        # 1. Login form WITHOUT CSRF token (unauthenticated session) -> 403
+        r_missing = client.post(
+            "/auth/login",
+            data={"email": "csrf@example.com", "password": "StrongPassword123"},
+            headers={"Accept": "text/html"},
+            follow_redirects=False,
+        )
+        assert r_missing.status_code == 403
+        assert r_missing.json() == {"detail": "CSRF validation failed."}
+
+        # Obtain pre-auth CSRF cookie (still unauthenticated — no sr_access_token!)
+        csrf_token = client.get("/auth/csrf").json()["csrf_token"]
+        assert "sr_access_token" not in client.cookies
+
+        # 2. Login form with INVALID CSRF token -> 403
+        r_invalid = client.post(
+            "/auth/login",
+            data={
+                "email": "csrf@example.com",
+                "password": "StrongPassword123",
+                "csrf_token": "tampered-token",
+            },
+            headers={"Accept": "text/html"},
+            follow_redirects=False,
+        )
+        assert r_invalid.status_code == 403
+        assert r_invalid.json() == {"detail": "CSRF validation failed."}
+
+        # 3. Login form with VALID CSRF token -> 303 -> /map and rotates CSRF cookie
+        r_valid = client.post(
+            "/auth/login",
+            data={
+                "email": "csrf@example.com",
+                "password": "StrongPassword123",
+                "csrf_token": csrf_token,
+            },
+            headers={"Accept": "text/html"},
+            follow_redirects=False,
+        )
+        assert r_valid.status_code == 303
+        assert r_valid.headers["location"] == "/map"
+        # Post-login CSRF cookie must be rotated to prevent fixation
+        assert client.cookies.get("sr_csrf_token") != csrf_token
+
+
+def test_signup_form_csrf_missing_invalid_and_valid():
+    auth_client, profile_client = _mock_auth_success()
+
+    with (
+        patch("app.services.auth.get_supabase_client", return_value=auth_client),
+        patch("app.services.auth.create_authenticated_supabase_client", return_value=profile_client),
+    ):
+        client = TestClient(app)
+
+        # 1. Signup form WITHOUT CSRF token -> 403
+        r_missing = client.post(
+            "/auth/signup",
+            data={
+                "email": "csrf@example.com",
+                "password": "StrongPassword123",
+                "full_name": "CSRF User",
+            },
+            headers={"Accept": "text/html"},
+            follow_redirects=False,
+        )
+        assert r_missing.status_code == 403
+        assert r_missing.json() == {"detail": "CSRF validation failed."}
+
+        # Obtain pre-auth CSRF cookie (unauthenticated)
+        csrf_token = client.get("/auth/csrf").json()["csrf_token"]
+
+        # 2. Signup form with INVALID CSRF token -> 403
+        r_invalid = client.post(
+            "/auth/signup",
+            data={
+                "email": "csrf@example.com",
+                "password": "StrongPassword123",
+                "full_name": "CSRF User",
+                "csrf_token": "wrong-csrf-token",
+            },
+            headers={"Accept": "text/html"},
+            follow_redirects=False,
+        )
+        assert r_invalid.status_code == 403
+
+        # 3. Signup form with VALID CSRF token -> 303 -> /map
+        r_valid = client.post(
+            "/auth/signup",
+            data={
+                "email": "csrf@example.com",
+                "password": "StrongPassword123",
+                "full_name": "CSRF User",
+                "csrf_token": csrf_token,
+            },
+            headers={"Accept": "text/html"},
+            follow_redirects=False,
+        )
+        assert r_valid.status_code == 303
+        assert r_valid.headers["location"] == "/map"
+
+
+def test_same_origin_and_cross_origin_browser_requests():
+    auth_client, profile_client = _mock_auth_success()
+
+    with (
+        patch("app.services.auth.get_supabase_client", return_value=auth_client),
+        patch("app.services.auth.create_authenticated_supabase_client", return_value=profile_client),
+    ):
+        client = TestClient(app, base_url="http://testserver")
+        csrf_token = client.get("/auth/csrf").json()["csrf_token"]
+
+        # Same-origin browser HTMX/fetch request with valid Origin + CSRF -> allowed
+        r_same_origin = client.post(
+            "/auth/login",
+            json={"email": "csrf@example.com", "password": "StrongPassword123"},
+            headers={
+                "Origin": "http://testserver",
+                "HX-Request": "true",
+                "X-CSRF-Token": csrf_token,
+            },
+        )
+        assert r_same_origin.status_code == 200
+
+        # Refresh CSRF token after login rotation
+        csrf_after = client.cookies.get("sr_csrf_token")
+
+        # Same-origin Referer on logout with valid CSRF -> allowed
+        with patch("app.routers.auth.logout_session"):
+            r_same_ref = client.post(
+                "/auth/logout",
+                headers={
+                    "Referer": "http://testserver/map",
+                    "X-CSRF-Token": csrf_after,
+                },
+            )
+            assert r_same_ref.status_code == 200
+
+        # Cross-origin Origin header rejected even if valid CSRF token is supplied
+        csrf_new = client.get("/auth/csrf").json()["csrf_token"]
+        r_cross_origin = client.post(
+            "/auth/login",
+            data={
+                "email": "csrf@example.com",
+                "password": "StrongPassword123",
+                "csrf_token": csrf_new,
+            },
+            headers={"Origin": "https://evil.example"},
+        )
+        assert r_cross_origin.status_code == 403
+        assert r_cross_origin.json() == {"detail": "Cross-origin request rejected."}
+
+        # Cross-origin Referer header rejected
+        r_cross_ref = client.post(
+            "/auth/signup",
+            data={
+                "email": "csrf@example.com",
+                "password": "StrongPassword123",
+                "csrf_token": csrf_new,
+            },
+            headers={"Referer": "https://attacker.example/form"},
+        )
+        assert r_cross_ref.status_code == 403
+        assert r_cross_ref.json() == {"detail": "Cross-origin request rejected."}
+
+        # Explicit "null" Origin (sandboxed iframe CSRF) rejected
+        r_null_origin = client.post(
+            "/auth/login",
+            data={
+                "email": "csrf@example.com",
+                "password": "StrongPassword123",
+                "csrf_token": csrf_new,
+            },
+            headers={"Origin": "null"},
+        )
+        assert r_null_origin.status_code == 403
+        assert r_null_origin.json() == {"detail": "Cross-origin request rejected."}
+
+
+def test_bearer_api_logout_without_csrf_and_csrf_token_cannot_authenticate():
+    client = TestClient(app)
+
+    # 1. Pure Bearer-token API logout works without cookie-based CSRF
+    with patch("app.routers.auth.logout_session") as mock_logout:
+        r_bearer_logout = client.post(
+            "/auth/logout",
+            headers={"Authorization": "Bearer api-client-jwt"},
+        )
+        assert r_bearer_logout.status_code == 200
+        mock_logout.assert_called_once()
+
+    # 2. A CSRF token cookie alone must NEVER authenticate a user
+    csrf_token = client.get("/auth/csrf").json()["csrf_token"]
+    r_csrf_only = client.get("/auth/me", headers={"Accept": "application/json"})
+    assert r_csrf_only.status_code == 401
+
+    # Passing CSRF token in X-CSRF-Token or Bearer header still fails auth
+    with patch(
+        "app.deps.get_authenticated_user_from_token",
+        side_effect=InvalidCredentialsError("Invalid authentication token."),
+    ):
+        r_csrf_as_bearer = client.get(
+            "/auth/me",
+            headers={
+                "Accept": "application/json",
+                "Authorization": f"Bearer {csrf_token}",
+            },
+        )
+        assert r_csrf_as_bearer.status_code == 401

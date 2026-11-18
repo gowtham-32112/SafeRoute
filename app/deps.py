@@ -18,8 +18,10 @@ from app.services.session import (
     clear_session_cookies,
     extract_bearer_token,
     extract_session_tokens,
+    is_browser_auth_csrf_subject,
     set_session_cookies,
     verify_csrf_double_submit,
+    verify_same_origin,
 )
 from app.services.supabase_client import get_supabase_client
 
@@ -168,29 +170,86 @@ async def require_admin(
     return current_user
 
 
-async def require_csrf(
+async def _extract_form_csrf_token(request: Request) -> Optional[str]:
+    """Read csrf_token from URL-encoded or multipart form payloads if present."""
+    content_type = request.headers.get("content-type", "").lower()
+    if (
+        "application/x-www-form-urlencoded" in content_type
+        or "multipart/form-data" in content_type
+    ):
+        form = await request.form()
+        raw_val = form.get("csrf_token")
+        if isinstance(raw_val, str):
+            return raw_val
+    return None
+
+
+async def require_auth_csrf(
     request: Request,
     app_settings: Settings = Depends(get_settings),
 ) -> None:
-    """Enforce double-submit CSRF protection on cookie-authenticated state changes.
+    """Enforce CSRF protection on pre-authentication endpoints (login/signup).
 
-    Pure Bearer-header API calls without auth cookies are exempt from CSRF.
+    1. Rejects cross-origin or 'null' Origin/Referer headers immediately.
+    2. For unauthenticated or authenticated browser requests (HTML forms, HTMX,
+       requests with Origin/Referer, or requests carrying SafeRoute cookies),
+       requires a valid double-submit CSRF token in constant time.
+    3. Pure non-browser JSON API clients (no cookies, no Origin/Referer, no form
+       encoding) are not forced to maintain browser CSRF cookies.
     """
     if request.method.upper() in ("GET", "HEAD", "OPTIONS"):
         return
 
-    _, _, via_cookie = extract_session_tokens(request, app_settings)
-    if not via_cookie:
+    if not verify_same_origin(request):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cross-origin request rejected.",
+        )
+
+    if not is_browser_auth_csrf_subject(request, app_settings):
         return
 
-    submitted_token: Optional[str] = None
-    content_type = request.headers.get("content-type", "").lower()
-    if "application/x-www-form-urlencoded" in content_type or "multipart/form-data" in content_type:
-        form = await request.form()
-        raw_val = form.get("csrf_token")
-        if isinstance(raw_val, str):
-            submitted_token = raw_val
+    submitted_token = await _extract_form_csrf_token(request)
+    if not verify_csrf_double_submit(request, submitted_token, app_settings):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="CSRF validation failed.",
+        )
 
+
+async def require_csrf(
+    request: Request,
+    app_settings: Settings = Depends(get_settings),
+) -> None:
+    """Enforce CSRF protection on authenticated state-changing endpoints.
+
+    1. Rejects cross-origin or 'null' Origin/Referer headers immediately.
+    2. Pure Bearer-token API calls (no auth cookies, non-form) are exempt from
+       cookie-based CSRF checks.
+    3. Cookie-authenticated, HTML form, or HTMX requests must pass constant-time
+       double-submit CSRF verification.
+    """
+    if request.method.upper() in ("GET", "HEAD", "OPTIONS"):
+        return
+
+    if not verify_same_origin(request):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cross-origin request rejected.",
+        )
+
+    _, _, via_cookie = extract_session_tokens(request, app_settings)
+    content_type = request.headers.get("content-type", "").lower()
+    is_form = (
+        "application/x-www-form-urlencoded" in content_type
+        or "multipart/form-data" in content_type
+    )
+    is_htmx = request.headers.get("hx-request", "").lower() == "true"
+
+    if not via_cookie and not is_form and not is_htmx:
+        return
+
+    submitted_token = await _extract_form_csrf_token(request)
     if not verify_csrf_double_submit(request, submitted_token, app_settings):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

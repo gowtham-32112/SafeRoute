@@ -7,7 +7,13 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import ValidationError
 
 from app.config import Settings
-from app.deps import get_current_user, get_settings, require_admin, require_csrf
+from app.deps import (
+    get_current_user,
+    get_settings,
+    require_admin,
+    require_auth_csrf,
+    require_csrf,
+)
 from app.services.auth import (
     AuthenticatedUser,
     LoginPayload,
@@ -78,6 +84,7 @@ async def get_csrf_token(
     "/signup",
     status_code=status.HTTP_201_CREATED,
     summary="Email/Password User Signup",
+    dependencies=[Depends(require_auth_csrf)],
 )
 async def signup(
     request: Request,
@@ -130,7 +137,11 @@ async def signup(
     return resp
 
 
-@router.post("/login", summary="Email/Password User Login")
+@router.post(
+    "/login",
+    summary="Email/Password User Login",
+    dependencies=[Depends(require_auth_csrf)],
+)
 async def login(
     request: Request,
     app_settings: Settings = Depends(get_settings),
