@@ -1,0 +1,102 @@
+{# SafeRoute Required UX State Components (Spec Section 5 & AGENTS.md Section 6)
+   Every interactive page or panel must handle loading, empty, and error states.
+#}
+
+{% from "components/ui.html" import button %}
+
+{% macro loading_state(
+  message='Loading road hazard data...',
+  submessage='Please wait a moment.',
+  compact=False,
+  id=None,
+  extra_classes=''
+) -%}
+  <div
+    {% if id %}id="{{ id }}"{% endif %}
+    role="status"
+    aria-live="polite"
+    aria-busy="true"
+    class="sr-card bg-surface border border-border rounded-card flex flex-col items-center justify-center text-center {{ 'p-5 gap-2.5' if compact else 'px-6 py-10 gap-3' }} {{ extra_classes }}"
+  >
+    <div class="inline-flex h-10 w-10 items-center justify-center rounded-full bg-primary-soft text-primary" aria-hidden="true">
+      <svg class="h-5 w-5 animate-spin motion-reduce:animate-none" viewBox="0 0 24 24" fill="none">
+        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"></circle>
+        <path class="opacity-90" fill="currentColor" d="M4 12a8 8 0 018-8v3a5 5 0 00-5 5H4z"></path>
+      </svg>
+    </div>
+    <p class="text-sm sm:text-base font-semibold text-ink">{{ message }}</p>
+    {%- if submessage -%}
+      <p class="text-xs sm:text-sm text-muted max-w-md">{{ submessage }}</p>
+    {%- endif -%}
+  </div>
+{%- endmacro %}
+
+
+{% macro empty_state(
+  title='No hazards reported yet',
+  message='No road hazard reports match this view. Absence of reports does not guarantee an area is hazard-free.',
+  action_label=None,
+  action_href=None,
+  heading_level='h2',
+  extra_classes=''
+) -%}
+  <div
+    class="sr-card bg-surface border border-border rounded-card px-6 py-10 flex flex-col items-center justify-center text-center gap-3 {{ extra_classes }}"
+  >
+    <div class="inline-flex h-12 w-12 items-center justify-center rounded-full bg-primary-soft text-primary-dark" aria-hidden="true">
+      <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+        <path d="M12 8v4"></path>
+        <path d="M12 16h.01"></path>
+      </svg>
+    </div>
+    <{{ heading_level }} class="text-base sm:text-lg font-bold text-primary-dark tracking-tight">
+      {{ title }}
+    </{{ heading_level }}>
+    <p class="text-sm text-muted max-w-md leading-relaxed">{{ message }}</p>
+    {%- if action_label and action_href -%}
+      <div class="mt-2">
+        {{ button(label=action_label, href=action_href, variant='primary') }}
+      </div>
+    {%- endif -%}
+    {%- if caller is defined -%}
+      <div class="mt-2">{{ caller() }}</div>
+    {%- endif -%}
+  </div>
+{%- endmacro %}
+
+
+{% macro error_state(
+  title='Unable to load this view',
+  message='Something went wrong while loading the requested data. Please try again in a moment.',
+  retry_label='Try again',
+  retry_href=None,
+  retry_attrs=None,
+  heading_level='h2',
+  extra_classes=''
+) -%}
+  <div
+    role="alert"
+    class="sr-card bg-surface border border-severity-high/40 rounded-card px-6 py-8 flex flex-col items-center justify-center text-center gap-3 {{ extra_classes }}"
+  >
+    <div class="inline-flex h-12 w-12 items-center justify-center rounded-full sr-severity-high border" aria-hidden="true">
+      <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10"></circle>
+        <line x1="12" y1="8" x2="12" y2="12"></line>
+        <line x1="12" y1="16" x2="12.01" y2="16"></line>
+      </svg>
+    </div>
+    <{{ heading_level }} class="text-base sm:text-lg font-bold text-ink tracking-tight">
+      {{ title }}
+    </{{ heading_level }}>
+    <p class="text-sm text-muted max-w-md leading-relaxed">{{ message }}</p>
+    {%- if retry_label and (retry_href or retry_attrs) -%}
+      <div class="mt-2">
+        {{ button(label=retry_label, href=retry_href, variant='secondary', attrs=retry_attrs) }}
+      </div>
+    {%- endif -%}
+    {%- if caller is defined -%}
+      <div class="mt-2">{{ caller() }}</div>
+    {%- endif -%}
+  </div>
+{%- endmacro %}

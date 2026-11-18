@@ -1,0 +1,126 @@
+{# SafeRoute Accessible Toast Notification Region
+   Supports success, error, warning, and info messages from:
+   1. Server template context (`toasts` or `messages` list of dicts)
+   2. Client events (`window.SafeRouteToast.success(...)` / `saferoute:toast`)
+   3. HTMX response triggers (`HX-Trigger: {"saferoute:toast": {...}}`)
+#}
+
+{%- set server_toasts = [] -%}
+{%- if toasts is defined and toasts -%}
+  {%- set server_toasts = toasts -%}
+{%- elif messages is defined and messages -%}
+  {%- set server_toasts = messages -%}
+{%- endif -%}
+
+<script id="sr-initial-toasts" type="application/json">{{ server_toasts | tojson }}</script>
+
+<div
+  id="sr-toast-root"
+  x-data="srToastManager()"
+  @saferoute:toast.window="add($event.detail)"
+  @saferoute:toast-clear.window="dismissAll()"
+  @keydown.escape.window="if (toasts.length) dismiss(toasts[toasts.length - 1].id)"
+  class="fixed bottom-4 left-4 right-4 sm:left-auto sm:right-6 sm:w-full sm:max-w-sm z-50 flex flex-col gap-2.5 pointer-events-none"
+>
+  {# Assertive live region for errors and warnings #}
+  <div role="alert" aria-live="assertive" aria-atomic="false" class="flex flex-col gap-2.5">
+    <template x-for="toast in assertiveToasts()" :key="toast.id">
+      <div
+        class="pointer-events-auto sr-card bg-surface border rounded-card shadow-elevated p-4 flex items-start gap-3"
+        :class="toast.type === 'error' ? 'border-l-4 border-l-severity-high border-border' : 'border-l-4 border-l-severity-medium border-border'"
+        @mouseenter="pause(toast.id)"
+        @mouseleave="resume(toast)"
+        @focusin="pause(toast.id)"
+        @focusout="resume(toast)"
+      >
+        <span
+          class="mt-0.5 inline-flex h-6 w-6 items-center justify-center rounded-full shrink-0"
+          :class="toast.type === 'error' ? 'sr-severity-high' : 'sr-severity-medium'"
+          aria-hidden="true"
+        >
+          <svg x-show="toast.type === 'error'" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="15" y1="9" x2="9" y2="15"></line>
+            <line x1="9" y1="9" x2="15" y2="15"></line>
+          </svg>
+          <svg x-show="toast.type === 'warning'" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"></path>
+            <line x1="12" y1="9" x2="12" y2="13"></line>
+            <line x1="12" y1="17" x2="12.01" y2="17"></line>
+          </svg>
+        </span>
+
+        <div class="min-w-0 flex-1">
+          <p
+            class="text-xs font-bold uppercase tracking-wide"
+            :class="toast.type === 'error' ? 'text-severity-high' : 'text-ink'"
+            x-text="toast.label"
+          ></p>
+          <p class="mt-0.5 text-sm text-ink leading-snug break-words" x-text="toast.message"></p>
+        </div>
+
+        <button
+          type="button"
+          class="inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted hover:text-ink hover:bg-canvas shrink-0 transition-colors"
+          aria-label="Dismiss notification"
+          @click="dismiss(toast.id)"
+        >
+          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+    </template>
+  </div>
+
+  {# Polite live region for success and informational notices #}
+  <div role="status" aria-live="polite" aria-atomic="false" class="flex flex-col gap-2.5">
+    <template x-for="toast in politeToasts()" :key="toast.id">
+      <div
+        class="pointer-events-auto sr-card bg-surface border rounded-card shadow-elevated p-4 flex items-start gap-3"
+        :class="toast.type === 'success' ? 'border-l-4 border-l-severity-low border-border' : 'border-l-4 border-l-primary border-border'"
+        @mouseenter="pause(toast.id)"
+        @mouseleave="resume(toast)"
+        @focusin="pause(toast.id)"
+        @focusout="resume(toast)"
+      >
+        <span
+          class="mt-0.5 inline-flex h-6 w-6 items-center justify-center rounded-full shrink-0"
+          :class="toast.type === 'success' ? 'sr-severity-low' : 'bg-primary-soft text-primary-dark'"
+          aria-hidden="true"
+        >
+          <svg x-show="toast.type === 'success'" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="20 6 9 17 4 12"></polyline>
+          </svg>
+          <svg x-show="toast.type === 'info'" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="12" y1="16" x2="12" y2="12"></line>
+            <line x1="12" y1="8" x2="12.01" y2="8"></line>
+          </svg>
+        </span>
+
+        <div class="min-w-0 flex-1">
+          <p
+            class="text-xs font-bold uppercase tracking-wide"
+            :class="toast.type === 'success' ? 'text-ink' : 'text-primary-dark'"
+            x-text="toast.label"
+          ></p>
+          <p class="mt-0.5 text-sm text-ink leading-snug break-words" x-text="toast.message"></p>
+        </div>
+
+        <button
+          type="button"
+          class="inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted hover:text-ink hover:bg-canvas shrink-0 transition-colors"
+          aria-label="Dismiss notification"
+          @click="dismiss(toast.id)"
+        >
+          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+    </template>
+  </div>
+</div>

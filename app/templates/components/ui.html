@@ -1,0 +1,370 @@
+{# SafeRoute Reusable UI Component Macros (Spec Section 5)
+   Light theme only. Never use mint (#0FFCBE) as text on white/light backgrounds.
+   Every severity indicator always includes an explicit text label.
+#}
+
+{% macro _render_attrs(attrs) -%}
+  {%- if attrs -%}
+    {%- for key, val in attrs.items() -%}
+      {%- if val is sameas true %} {{ key }}{% elif val is not sameas false and val is not none %} {{ key }}="{{ val }}"{% endif -%}
+    {%- endfor -%}
+  {%- endif -%}
+{%- endmacro %}
+
+
+{% macro button(
+  label,
+  variant='primary',
+  type='button',
+  href=None,
+  size='md',
+  disabled=False,
+  loading=False,
+  full_width=False,
+  aria_label=None,
+  extra_classes='',
+  attrs=None
+) -%}
+  {%- set size_classes = {
+    'sm': 'px-3.5 py-2 text-xs min-h-[38px]',
+    'md': 'px-5 py-2.5 text-sm min-h-[44px]',
+    'lg': 'px-6 py-3 text-base min-h-[48px]'
+  }.get(size, 'px-5 py-2.5 text-sm min-h-[44px]') -%}
+
+  {%- set variant_classes = {
+    'primary': 'bg-primary text-white hover:bg-primary-dark active:bg-primary-dark border border-transparent shadow-sm',
+    'secondary': 'bg-surface text-primary-dark hover:bg-primary-soft active:bg-primary-soft border border-border',
+    'ghost': 'bg-transparent text-ink hover:bg-primary-soft border border-transparent',
+    'danger': 'bg-severity-high text-white hover:bg-red-700 active:bg-red-800 border border-transparent shadow-sm',
+    'accent': 'bg-accent text-ink hover:brightness-95 border border-transparent shadow-sm'
+  }.get(variant, 'bg-primary text-white hover:bg-primary-dark border border-transparent shadow-sm') -%}
+
+  {%- set base_classes = 'inline-flex items-center justify-center gap-2 rounded-full font-semibold transition-colors duration-150 select-none disabled:opacity-60 disabled:cursor-not-allowed' -%}
+  {%- set width_class = 'w-full' if full_width else '' -%}
+  {%- set all_classes = [base_classes, size_classes, variant_classes, width_class, extra_classes] | reject('equalto', '') | join(' ') -%}
+
+  {%- if href -%}
+    <a
+      href="{{ href }}"
+      class="{{ all_classes }}{% if disabled %} pointer-events-none opacity-60{% endif %}"
+      {% if disabled %}aria-disabled="true" tabindex="-1"{% endif %}
+      {% if aria_label %}aria-label="{{ aria_label }}"{% endif %}
+      {{ _render_attrs(attrs) }}
+    >
+      <span>{{ label }}</span>
+    </a>
+  {%- else -%}
+    <button
+      type="{{ type }}"
+      class="{{ all_classes }}"
+      {% if disabled or loading %}disabled aria-disabled="true"{% endif %}
+      {% if loading %}aria-busy="true"{% endif %}
+      {% if aria_label %}aria-label="{{ aria_label }}"{% endif %}
+      {{ _render_attrs(attrs) }}
+    >
+      {%- if loading -%}
+        <svg class="h-4 w-4 animate-spin motion-reduce:animate-none" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"></circle>
+          <path class="opacity-90" fill="currentColor" d="M4 12a8 8 0 018-8v3a5 5 0 00-5 5H4z"></path>
+        </svg>
+      {%- endif -%}
+      <span>{{ label }}</span>
+    </button>
+  {%- endif -%}
+{%- endmacro %}
+
+
+{% macro card(
+  title=None,
+  subtitle=None,
+  heading_level='h2',
+  padding='p-5 sm:p-6',
+  extra_classes='',
+  attrs=None
+) -%}
+  <section
+    class="sr-card bg-surface border border-border rounded-card shadow-card {{ padding }} {{ extra_classes }}"
+    {{ _render_attrs(attrs) }}
+  >
+    {%- if title or subtitle -%}
+      <header class="mb-4">
+        {%- if title -%}
+          <{{ heading_level }} class="text-lg font-bold text-primary-dark tracking-tight leading-snug">
+            {{ title }}
+          </{{ heading_level }}>
+        {%- endif -%}
+        {%- if subtitle -%}
+          <p class="mt-1 text-sm text-muted leading-relaxed">{{ subtitle }}</p>
+        {%- endif -%}
+      </header>
+    {%- endif -%}
+    {%- if caller is defined -%}
+      {{ caller() }}
+    {%- endif -%}
+  </section>
+{%- endmacro %}
+
+
+{% macro chip(
+  label,
+  active=False,
+  href=None,
+  type='button',
+  aria_label=None,
+  extra_classes='',
+  attrs=None
+) -%}
+  {%- set state_classes = (
+    'bg-primary-soft text-primary-dark border-primary font-semibold'
+    if active
+    else 'bg-surface text-muted border-border hover:bg-primary-soft hover:text-ink font-medium'
+  ) -%}
+  {%- set base_classes = 'sr-chip inline-flex items-center justify-center gap-1.5 rounded-full border px-3.5 py-1.5 text-xs sm:text-sm min-h-[36px] transition-colors duration-150 whitespace-nowrap' -%}
+  {%- set all_classes = [base_classes, state_classes, extra_classes] | reject('equalto', '') | join(' ') -%}
+
+  {%- if href -%}
+    <a
+      href="{{ href }}"
+      class="{{ all_classes }}"
+      {% if active %}aria-current="true"{% endif %}
+      {% if aria_label %}aria-label="{{ aria_label }}"{% endif %}
+      {{ _render_attrs(attrs) }}
+    >
+      {{ label }}
+    </a>
+  {%- else -%}
+    <button
+      type="{{ type }}"
+      class="{{ all_classes }}"
+      aria-pressed="{{ 'true' if active else 'false' }}"
+      {% if aria_label %}aria-label="{{ aria_label }}"{% endif %}
+      {{ _render_attrs(attrs) }}
+    >
+      {{ label }}
+    </button>
+  {%- endif -%}
+{%- endmacro %}
+
+
+{% macro severity_badge(
+  level='low',
+  score=None,
+  show_score=False,
+  extra_classes=''
+) -%}
+  {%- set normalized = (level or 'low') | string | trim | lower -%}
+  {%- if normalized not in ['low', 'medium', 'high'] -%}
+    {%- set normalized = 'low' -%}
+  {%- endif -%}
+  {%- set display_labels = {
+    'low': 'Low',
+    'medium': 'Medium',
+    'high': 'High'
+  } -%}
+  {%- set label_text = display_labels[normalized] -%}
+  {%- set badge_class = 'sr-severity-' ~ normalized -%}
+  {%- set dot_class = 'sr-severity-' ~ normalized ~ '-dot' -%}
+
+  <span
+    class="inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold leading-none {{ badge_class }} {{ extra_classes }}"
+    aria-label="Severity: {{ label_text }}{% if show_score and score is not none %} ({{ score }} out of 100){% endif %}"
+  >
+    <span class="h-2 w-2 rounded-full shrink-0 {{ dot_class }}" aria-hidden="true"></span>
+    <span>{{ label_text }}</span>
+    {%- if show_score and score is not none -%}
+      <span class="opacity-80" aria-hidden="true">&middot; {{ score }}</span>
+    {%- endif -%}
+  </span>
+{%- endmacro %}
+
+
+{% macro badge(
+  label,
+  variant='neutral',
+  extra_classes=''
+) -%}
+  {%- set variant_classes = {
+    'neutral': 'bg-canvas text-ink border border-border',
+    'primary': 'bg-primary-soft text-primary-dark border border-primary/20',
+    'mint': 'bg-accent text-ink border border-transparent',
+    'dark': 'bg-primary-dark text-white border border-transparent',
+    'escalated': 'sr-severity-high border',
+    'fixed': 'sr-severity-low border'
+  }.get(variant, 'bg-canvas text-ink border border-border') -%}
+
+  <span class="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold leading-none {{ variant_classes }} {{ extra_classes }}">
+    {{ label }}
+  </span>
+{%- endmacro %}
+
+
+{% macro input_field(
+  name,
+  label,
+  type='text',
+  id=None,
+  value='',
+  placeholder='',
+  required=False,
+  disabled=False,
+  readonly=False,
+  error=None,
+  help_text=None,
+  autocomplete=None,
+  extra_classes='',
+  attrs=None
+) -%}
+  {%- set field_id = id or ('field-' ~ name) -%}
+  {%- set help_id = field_id ~ '-help' -%}
+  {%- set error_id = field_id ~ '-error' -%}
+  {%- set described_by = [] -%}
+  {%- if help_text %}{% set _ = described_by.append(help_id) %}{% endif -%}
+  {%- if error %}{% set _ = described_by.append(error_id) %}{% endif -%}
+
+  <div class="w-full space-y-1.5">
+    <label for="{{ field_id }}" class="block text-sm font-semibold text-ink">
+      {{ label }}
+      {%- if required -%}
+        <span class="text-severity-high ml-0.5" aria-hidden="true">*</span>
+      {%- endif -%}
+    </label>
+    <input
+      id="{{ field_id }}"
+      name="{{ name }}"
+      type="{{ type }}"
+      value="{{ value if value is not none else '' }}"
+      {% if placeholder %}placeholder="{{ placeholder }}"{% endif %}
+      {% if autocomplete %}autocomplete="{{ autocomplete }}"{% endif %}
+      {% if required %}required{% endif %}
+      {% if disabled %}disabled{% endif %}
+      {% if readonly %}readonly{% endif %}
+      {% if error %}aria-invalid="true"{% endif %}
+      {% if described_by %}aria-describedby="{{ described_by | join(' ') }}"{% endif %}
+      class="block w-full min-h-[44px] rounded-lg border px-3.5 py-2.5 text-sm text-ink bg-surface placeholder:text-muted/80 transition-colors duration-150 disabled:bg-canvas disabled:text-muted disabled:cursor-not-allowed {{ 'border-severity-high' if error else 'border-border hover:border-primary/60' }} {{ extra_classes }}"
+      {{ _render_attrs(attrs) }}
+    >
+    {%- if help_text -%}
+      <p id="{{ help_id }}" class="text-xs text-muted leading-relaxed">{{ help_text }}</p>
+    {%- endif -%}
+    {%- if error -%}
+      <p id="{{ error_id }}" class="text-xs font-semibold text-severity-high leading-relaxed" role="alert">
+        {{ error }}
+      </p>
+    {%- endif -%}
+  </div>
+{%- endmacro %}
+
+
+{% macro textarea_field(
+  name,
+  label,
+  id=None,
+  value='',
+  placeholder='',
+  rows=4,
+  required=False,
+  disabled=False,
+  error=None,
+  help_text=None,
+  maxlength=None,
+  extra_classes='',
+  attrs=None
+) -%}
+  {%- set field_id = id or ('field-' ~ name) -%}
+  {%- set help_id = field_id ~ '-help' -%}
+  {%- set error_id = field_id ~ '-error' -%}
+  {%- set described_by = [] -%}
+  {%- if help_text %}{% set _ = described_by.append(help_id) %}{% endif -%}
+  {%- if error %}{% set _ = described_by.append(error_id) %}{% endif -%}
+
+  <div class="w-full space-y-1.5">
+    <label for="{{ field_id }}" class="block text-sm font-semibold text-ink">
+      {{ label }}
+      {%- if required -%}
+        <span class="text-severity-high ml-0.5" aria-hidden="true">*</span>
+      {%- endif -%}
+    </label>
+    <textarea
+      id="{{ field_id }}"
+      name="{{ name }}"
+      rows="{{ rows }}"
+      {% if placeholder %}placeholder="{{ placeholder }}"{% endif %}
+      {% if maxlength %}maxlength="{{ maxlength }}"{% endif %}
+      {% if required %}required{% endif %}
+      {% if disabled %}disabled{% endif %}
+      {% if error %}aria-invalid="true"{% endif %}
+      {% if described_by %}aria-describedby="{{ described_by | join(' ') }}"{% endif %}
+      class="block w-full rounded-lg border px-3.5 py-2.5 text-sm text-ink bg-surface placeholder:text-muted/80 transition-colors duration-150 disabled:bg-canvas disabled:text-muted disabled:cursor-not-allowed {{ 'border-severity-high' if error else 'border-border hover:border-primary/60' }} {{ extra_classes }}"
+      {{ _render_attrs(attrs) }}
+    >{{ value if value is not none else '' }}</textarea>
+    {%- if help_text -%}
+      <p id="{{ help_id }}" class="text-xs text-muted leading-relaxed">{{ help_text }}</p>
+    {%- endif -%}
+    {%- if error -%}
+      <p id="{{ error_id }}" class="text-xs font-semibold text-severity-high leading-relaxed" role="alert">
+        {{ error }}
+      </p>
+    {%- endif -%}
+  </div>
+{%- endmacro %}
+
+
+{% macro select_field(
+  name,
+  label,
+  options,
+  id=None,
+  selected='',
+  placeholder=None,
+  required=False,
+  disabled=False,
+  error=None,
+  help_text=None,
+  extra_classes='',
+  attrs=None
+) -%}
+  {%- set field_id = id or ('field-' ~ name) -%}
+  {%- set help_id = field_id ~ '-help' -%}
+  {%- set error_id = field_id ~ '-error' -%}
+  {%- set described_by = [] -%}
+  {%- if help_text %}{% set _ = described_by.append(help_id) %}{% endif -%}
+  {%- if error %}{% set _ = described_by.append(error_id) %}{% endif -%}
+
+  <div class="w-full space-y-1.5">
+    <label for="{{ field_id }}" class="block text-sm font-semibold text-ink">
+      {{ label }}
+      {%- if required -%}
+        <span class="text-severity-high ml-0.5" aria-hidden="true">*</span>
+      {%- endif -%}
+    </label>
+    <select
+      id="{{ field_id }}"
+      name="{{ name }}"
+      {% if required %}required{% endif %}
+      {% if disabled %}disabled{% endif %}
+      {% if error %}aria-invalid="true"{% endif %}
+      {% if described_by %}aria-describedby="{{ described_by | join(' ') }}"{% endif %}
+      class="block w-full min-h-[44px] rounded-lg border px-3.5 py-2.5 text-sm text-ink bg-surface transition-colors duration-150 disabled:bg-canvas disabled:text-muted disabled:cursor-not-allowed {{ 'border-severity-high' if error else 'border-border hover:border-primary/60' }} {{ extra_classes }}"
+      {{ _render_attrs(attrs) }}
+    >
+      {%- if placeholder -%}
+        <option value=""{% if not selected %} selected{% endif %}>{{ placeholder }}</option>
+      {%- endif -%}
+      {%- for opt in options -%}
+        {%- set opt_val = opt.value if opt is mapping else opt[0] -%}
+        {%- set opt_label = opt.label if opt is mapping else opt[1] -%}
+        <option value="{{ opt_val }}"{% if (selected | string) == (opt_val | string) %} selected{% endif %}>
+          {{ opt_label }}
+        </option>
+      {%- endfor -%}
+    </select>
+    {%- if help_text -%}
+      <p id="{{ help_id }}" class="text-xs text-muted leading-relaxed">{{ help_text }}</p>
+    {%- endif -%}
+    {%- if error -%}
+      <p id="{{ error_id }}" class="text-xs font-semibold text-severity-high leading-relaxed" role="alert">
+        {{ error }}
+      </p>
+    {%- endif -%}
+  </div>
+{%- endmacro %}

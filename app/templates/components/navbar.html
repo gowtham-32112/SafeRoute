@@ -1,0 +1,208 @@
+{# SafeRoute Responsive Role-Aware Navigation Bar
+   Respects existing Stage 5 AuthenticatedUser (current_user.role / current_user.is_admin).
+   Never exposes admin navigation to ordinary users or app links to anonymous visitors.
+   Mint (#0FFCBE) is used strictly on dark blue surfaces or as badge fill with dark ink text.
+#}
+
+{%- set is_authenticated = current_user is defined and current_user is not none -%}
+{%- set is_admin = is_authenticated and (
+  (current_user.is_admin is defined and current_user.is_admin)
+  or (current_user.role is defined and current_user.role == 'admin')
+) -%}
+{%- set current_path = request.url.path if request is defined and request else '' -%}
+{%- set nav_key = active_nav if active_nav is defined and active_nav else '' -%}
+{%- set resolved_csrf = (
+  csrf_token if csrf_token is defined and csrf_token
+  else (request.cookies.get('sr_csrf_token', '') if request is defined and request and request.cookies is defined else '')
+) -%}
+
+{%- set nav_items = [] -%}
+{%- if is_authenticated -%}
+  {%- set _ = nav_items.append({'key': 'map', 'label': 'Map', 'href': '/map', 'active': nav_key == 'map' or current_path == '/map' or current_path.startswith('/map/')}) -%}
+  {%- set _ = nav_items.append({'key': 'report', 'label': 'Report', 'href': '/reports/new', 'active': nav_key == 'report' or current_path.startswith('/reports')}) -%}
+  {%- set _ = nav_items.append({'key': 'routes', 'label': 'Routes', 'href': '/routes', 'active': nav_key == 'routes' or current_path.startswith('/routes')}) -%}
+  {%- set _ = nav_items.append({'key': 'analytics', 'label': 'Analytics', 'href': '/analytics', 'active': nav_key == 'analytics' or current_path.startswith('/analytics')}) -%}
+  {%- if is_admin -%}
+    {%- set _ = nav_items.append({'key': 'escalations', 'label': 'Escalations', 'href': '/admin/escalations', 'active': nav_key == 'escalations' or current_path.startswith('/admin/escalations')}) -%}
+  {%- endif -%}
+{%- endif -%}
+
+<header
+  class="sticky top-0 z-40 bg-primary text-white border-b border-primary-dark/60 shadow-sm"
+  x-data="{ mobileMenuOpen: false }"
+  @keydown.escape.window="mobileMenuOpen = false"
+>
+  <div class="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+    <div class="flex h-16 items-center justify-between gap-3">
+      {# Brand Logo — mint accent icon strictly on dark blue header surface #}
+      <a
+        href="{{ '/map' if is_authenticated else '/' }}"
+        class="inline-flex items-center gap-2.5 rounded-lg py-1 pr-2 text-white hover:opacity-95 shrink-0"
+        aria-label="SafeRoute home"
+      >
+        <span
+          class="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-primary-dark border border-white/15 shrink-0"
+          aria-hidden="true"
+        >
+          <svg class="h-5 w-5 text-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+            <path d="M9 12l2 2 4-4"></path>
+          </svg>
+        </span>
+        <span class="flex flex-col leading-none">
+          <span class="text-lg font-extrabold tracking-tight text-white">SafeRoute</span>
+          <span class="text-[11px] font-medium text-primary-soft/90 hidden sm:inline">Road Hazard Awareness</span>
+        </span>
+      </a>
+
+      {# Desktop Navigation #}
+      {%- if is_authenticated -%}
+        <nav aria-label="Primary navigation" class="hidden md:flex items-center gap-1">
+          {%- for item in nav_items -%}
+            <a
+              href="{{ item.href }}"
+              {% if item.active %}aria-current="page"{% endif %}
+              class="relative inline-flex items-center px-3.5 py-2 rounded-lg text-sm transition-colors duration-150 {{ 'bg-primary-dark text-white font-bold' if item.active else 'text-white/90 hover:bg-primary-dark/70 hover:text-white font-semibold' }}"
+            >
+              <span>{{ item.label }}</span>
+              {%- if item.active -%}
+                <span
+                  class="absolute inset-x-3 bottom-0.5 h-0.5 rounded-full bg-accent"
+                  aria-hidden="true"
+                ></span>
+              {%- endif -%}
+            </a>
+          {%- endfor -%}
+        </nav>
+      {%- endif -%}
+
+      {# Desktop Right Actions #}
+      <div class="hidden md:flex items-center gap-3 shrink-0">
+        {%- if is_authenticated -%}
+          <div class="flex items-center gap-2 text-sm text-white/95">
+            {%- if is_admin -%}
+              <span class="inline-flex items-center rounded-full bg-accent px-2.5 py-0.5 text-xs font-bold text-ink">
+                Admin
+              </span>
+            {%- endif -%}
+            <span class="max-w-[160px] truncate font-medium" title="{{ current_user.full_name or current_user.email }}">
+              {{ current_user.full_name or current_user.email }}
+            </span>
+          </div>
+          <form method="post" action="/auth/logout" class="inline">
+            <input type="hidden" name="csrf_token" value="{{ resolved_csrf }}">
+            <button
+              type="submit"
+              class="inline-flex items-center justify-center rounded-full border border-white/30 bg-primary-dark/60 px-4 py-1.5 min-h-[36px] text-xs font-semibold text-white hover:bg-primary-dark transition-colors duration-150"
+            >
+              Log out
+            </button>
+          </form>
+        {%- else -%}
+          <nav aria-label="Account navigation" class="flex items-center gap-2">
+            <a
+              href="/login"
+              {% if current_path == '/login' %}aria-current="page"{% endif %}
+              class="inline-flex items-center justify-center rounded-full px-4 py-2 min-h-[40px] text-sm font-semibold text-white hover:bg-primary-dark/70 transition-colors duration-150"
+            >
+              Log in
+            </a>
+            <a
+              href="/signup"
+              {% if current_path == '/signup' %}aria-current="page"{% endif %}
+              class="inline-flex items-center justify-center rounded-full bg-accent px-4 py-2 min-h-[40px] text-sm font-bold text-ink hover:brightness-95 transition-all duration-150 shadow-sm"
+            >
+              Sign up
+            </a>
+          </nav>
+        {%- endif -%}
+      </div>
+
+      {# Mobile Menu Toggle Button #}
+      <button
+        type="button"
+        class="md:hidden inline-flex items-center justify-center rounded-lg p-2.5 min-h-[44px] min-w-[44px] text-white hover:bg-primary-dark/70 transition-colors"
+        aria-controls="sr-mobile-nav"
+        :aria-expanded="mobileMenuOpen.toString()"
+        aria-label="Toggle navigation menu"
+        @click="mobileMenuOpen = !mobileMenuOpen"
+      >
+        <svg x-show="!mobileMenuOpen" class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <line x1="3" y1="6" x2="21" y2="6"></line>
+          <line x1="3" y1="12" x2="21" y2="12"></line>
+          <line x1="3" y1="18" x2="21" y2="18"></line>
+        </svg>
+        <svg x-show="mobileMenuOpen" x-cloak class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
+    </div>
+  </div>
+
+  {# Mobile Responsive Navigation Drawer (usable down to 375px) #}
+  <div
+    id="sr-mobile-nav"
+    x-show="mobileMenuOpen"
+    x-cloak
+    class="md:hidden border-t border-white/15 bg-primary-dark"
+  >
+    <div class="px-4 py-3 space-y-2">
+      {%- if is_authenticated -%}
+        <nav aria-label="Mobile navigation" class="flex flex-col gap-1">
+          {%- for item in nav_items -%}
+            <a
+              href="{{ item.href }}"
+              {% if item.active %}aria-current="page"{% endif %}
+              class="flex items-center justify-between rounded-lg px-3.5 py-2.5 min-h-[44px] text-sm {{ 'bg-primary text-white font-bold border-l-4 border-accent' if item.active else 'text-white/90 hover:bg-primary/60 hover:text-white font-semibold' }}"
+              @click="mobileMenuOpen = false"
+            >
+              <span>{{ item.label }}</span>
+            </a>
+          {%- endfor -%}
+        </nav>
+
+        <div class="pt-3 mt-2 border-t border-white/15 flex items-center justify-between gap-3">
+          <div class="min-w-0 flex items-center gap-2">
+            {%- if is_admin -%}
+              <span class="inline-flex items-center rounded-full bg-accent px-2.5 py-0.5 text-xs font-bold text-ink shrink-0">
+                Admin
+              </span>
+            {%- endif -%}
+            <span class="truncate text-sm font-medium text-white/95">
+              {{ current_user.full_name or current_user.email }}
+            </span>
+          </div>
+          <form method="post" action="/auth/logout" class="shrink-0">
+            <input type="hidden" name="csrf_token" value="{{ resolved_csrf }}">
+            <button
+              type="submit"
+              class="inline-flex items-center justify-center rounded-full border border-white/30 bg-primary px-4 py-2 min-h-[40px] text-xs font-semibold text-white hover:bg-primary/80"
+            >
+              Log out
+            </button>
+          </form>
+        </div>
+      {%- else -%}
+        <nav aria-label="Mobile account navigation" class="flex flex-col gap-2">
+          <a
+            href="/login"
+            {% if current_path == '/login' %}aria-current="page"{% endif %}
+            class="flex items-center justify-center rounded-full border border-white/30 px-4 py-2.5 min-h-[44px] text-sm font-semibold text-white hover:bg-primary"
+            @click="mobileMenuOpen = false"
+          >
+            Log in
+          </a>
+          <a
+            href="/signup"
+            {% if current_path == '/signup' %}aria-current="page"{% endif %}
+            class="flex items-center justify-center rounded-full bg-accent px-4 py-2.5 min-h-[44px] text-sm font-bold text-ink hover:brightness-95"
+            @click="mobileMenuOpen = false"
+          >
+            Sign up
+          </a>
+        </nav>
+      {%- endif -%}
+    </div>
+  </div>
+</header>
