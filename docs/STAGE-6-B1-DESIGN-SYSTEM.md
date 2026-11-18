@@ -34,7 +34,7 @@ All tokens strictly match `docs/SPEC.md` Section 5 and are defined in both the T
 
 ### Typography & Shape Rules
 - **Font**: Google Fonts `Plus Jakarta Sans` (`400`, `500`, `600`, `700`, `800`), `display=swap`. Headings `700–800`, body `400–500`.
-- **Theme**: Light theme only (`<meta name="color-scheme" content="light only">`, `color-scheme: light only;`, zero `dark:` classes).
+- **Theme**: Light theme only (`<meta name="color-scheme" content="only light">`, `color-scheme: only light;`, zero `dark:` classes).
 - **Mint Contrast Guard**: Mint (`#0FFCBE`) is never used as text on white or light surfaces.
 - **Shapes**: `12px` card radius (`rounded-card`), `999px` pill chip/button radius (`rounded-full` / `rounded-chip`), subtle elevation shadows (`shadow-card`, `shadow-elevated`).
 

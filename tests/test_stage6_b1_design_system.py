@@ -69,7 +69,8 @@ def test_base_template_contains_exact_spec_section5_tokens_fonts_and_script_orde
     assert html.lstrip().startswith("<!DOCTYPE html>")
     assert '<html lang="en" class="light">' in html
     assert 'name="viewport" content="width=device-width, initial-scale=1.0"' in html
-    assert 'name="color-scheme" content="light only"' in html
+    assert 'name="color-scheme" content="only light"' in html
+    assert 'content="light only"' not in html
 
     # Plus Jakarta Sans weights 400, 500, 600, 700, 800
     assert "Plus+Jakarta+Sans:wght@400;500;600;700;800" in html
@@ -108,7 +109,8 @@ def test_base_template_contains_exact_spec_section5_tokens_fonts_and_script_orde
 
 def test_mint_contrast_rule_and_light_theme_only_enforced():
     css_text = CSS_PATH.read_text(encoding="utf-8")
-    assert "color-scheme: light only;" in css_text
+    assert "color-scheme: only light;" in css_text
+    assert "color-scheme: light only;" not in css_text
     assert "color: #0FFCBE" not in css_text
     assert "color: var(--sr-accent)" not in css_text
 

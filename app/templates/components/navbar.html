@@ -57,7 +57,7 @@
 
       {# Desktop Navigation #}
       {%- if is_authenticated -%}
-        <nav aria-label="Primary navigation" class="hidden md:flex items-center gap-1">
+        <nav aria-label="Primary navigation" class="hidden lg:flex items-center gap-1">
           {%- for item in nav_items -%}
             <a
               href="{{ item.href }}"
@@ -77,7 +77,7 @@
       {%- endif -%}
 
       {# Desktop Right Actions #}
-      <div class="hidden md:flex items-center gap-3 shrink-0">
+      <div class="hidden lg:flex items-center gap-3 shrink-0">
         {%- if is_authenticated -%}
           <div class="flex items-center gap-2 text-sm text-white/95">
             {%- if is_admin -%}
@@ -118,10 +118,10 @@
         {%- endif -%}
       </div>
 
-      {# Mobile Menu Toggle Button #}
+      {# Mobile / Tablet Menu Toggle Button #}
       <button
         type="button"
-        class="md:hidden inline-flex items-center justify-center rounded-lg p-2.5 min-h-[44px] min-w-[44px] text-white hover:bg-primary-dark/70 transition-colors"
+        class="lg:hidden inline-flex items-center justify-center rounded-lg p-2.5 min-h-[44px] min-w-[44px] text-white hover:bg-primary-dark/70 transition-colors"
         aria-controls="sr-mobile-nav"
         :aria-expanded="mobileMenuOpen.toString()"
         aria-label="Toggle navigation menu"
@@ -140,12 +140,12 @@
     </div>
   </div>
 
-  {# Mobile Responsive Navigation Drawer (usable down to 375px) #}
+  {# Mobile / Tablet Responsive Navigation Drawer (usable down to 375px) #}
   <div
     id="sr-mobile-nav"
     x-show="mobileMenuOpen"
     x-cloak
-    class="md:hidden border-t border-white/15 bg-primary-dark"
+    class="lg:hidden border-t border-white/15 bg-primary-dark"
   >
     <div class="px-4 py-3 space-y-2">
       {%- if is_authenticated -%}
