@@ -1,0 +1,263 @@
+{% extends "base.html" %}
+{% from "components/states.html" import empty_state, error_state %}
+
+{% block title %}Live Map — SafeRoute{% endblock %}
+{% block meta_description %}Interactive SafeRoute community road-hazard awareness map centered on your browser location or Kukatpally Y Junction.{% endblock %}
+
+{% block head_extra %}
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin=""
+  >
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+  ></script>
+  <script src="/static/js/map.js"></script>
+{% endblock %}
+
+{% block main_class %}flex-1 w-full flex flex-col min-h-0{% endblock %}
+
+{% block content %}
+<script id="sr-map-config" type="application/json">{{ map_config | tojson }}</script>
+
+<div
+  id="sr-map-workspace"
+  x-data="srMapShell()"
+  @keydown.escape.window="closeSheet()"
+  class="sr-map-workspace relative w-full flex flex-col lg:flex-row overflow-hidden bg-canvas"
+>
+  {# Desktop Left Sidebar (360px) -> Collapsible Bottom Sheet on Mobile/Tablet (< lg) #}
+  <aside
+    id="sr-map-sidebar"
+    aria-label="Map controls and location status"
+    class="fixed inset-x-0 bottom-0 z-[1100] lg:static lg:z-auto lg:w-[360px] lg:shrink-0 lg:h-full bg-surface border-t lg:border-t-0 lg:border-r border-border rounded-t-2xl lg:rounded-none shadow-elevated lg:shadow-none flex flex-col"
+  >
+    {# Mobile / Tablet Bottom-Sheet Toggle Bar (Hidden on Desktop >= lg) #}
+    <div class="lg:hidden px-4 pt-2.5 pb-3 border-b border-border/70">
+      <div class="mx-auto mb-2 h-1.5 w-10 rounded-full bg-border" aria-hidden="true"></div>
+      <div class="flex items-center justify-between gap-3">
+        <button
+          id="sr-sheet-toggle"
+          type="button"
+          @click="toggleSheet()"
+          aria-controls="sr-map-sheet-body"
+          :aria-expanded="sheetExpanded.toString()"
+          aria-label="Toggle map details panel"
+          class="min-w-0 flex-1 flex items-center justify-between gap-2 text-left rounded-lg py-1 min-h-[44px]"
+        >
+          <span class="min-w-0">
+            <span class="block text-sm font-bold text-primary-dark truncate" x-text="statusTitle">
+              Locating you...
+            </span>
+            <span class="block text-xs text-muted truncate">
+              <span x-text="sheetExpanded ? 'Tap to collapse map panel' : 'Tap to view location details'">
+                Tap to view location details
+              </span>
+            </span>
+          </span>
+          <svg
+            class="h-5 w-5 text-primary-dark shrink-0 transition-transform duration-150"
+            :class="sheetExpanded ? 'rotate-180' : ''"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <polyline points="18 15 12 9 6 15"></polyline>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    {# Sidebar / Sheet Body (Always visible on desktop; collapsible on mobile/tablet) #}
+    <div
+      id="sr-map-sheet-body"
+      :class="sheetExpanded ? 'flex' : 'hidden lg:flex'"
+      class="flex-col flex-1 max-h-[58vh] lg:max-h-none overflow-y-auto p-4 sm:p-5 space-y-5"
+    >
+      <div class="space-y-1">
+        <h1 class="text-xl font-extrabold text-primary-dark tracking-tight">
+          Live Hazard Map
+        </h1>
+        <p class="text-xs sm:text-sm text-muted leading-relaxed">
+          Explore road conditions around your area. Drag or zoom freely at any time.
+        </p>
+      </div>
+
+      {# Accessible Location Status Card #}
+      <section
+        id="sr-location-status"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        class="rounded-card border p-4 space-y-3 transition-colors"
+        :class="locationMode === 'live' ? 'bg-primary-soft/65 border-primary/25' : (locationMode === 'error' ? 'sr-severity-high border-severity-high/40' : 'bg-canvas border-border')"
+      >
+        <div class="flex items-start gap-3">
+          <span
+            class="mt-0.5 inline-flex h-8 w-8 items-center justify-center rounded-full shrink-0"
+            :class="locationMode === 'live' ? 'bg-primary text-white' : (locationMode === 'fallback' ? 'sr-severity-medium' : 'bg-primary-soft text-primary-dark')"
+            aria-hidden="true"
+          >
+            <svg
+              x-show="locating"
+              class="h-4 w-4 animate-spin motion-reduce:animate-none"
+              viewBox="0 0 24 24"
+              fill="none"
+            >
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"></circle>
+              <path class="opacity-90" fill="currentColor" d="M4 12a8 8 0 018-8v3a5 5 0 00-5 5H4z"></path>
+            </svg>
+            <svg
+              x-show="!locating"
+              x-cloak
+              class="h-4 w-4"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <circle cx="12" cy="12" r="3"></circle>
+              <path d="M12 2v3"></path>
+              <path d="M12 19v3"></path>
+              <path d="M2 12h3"></path>
+              <path d="M19 12h3"></path>
+            </svg>
+          </span>
+          <div class="min-w-0 flex-1">
+            <p class="text-sm font-bold text-primary-dark leading-snug" x-text="statusTitle">
+              Locating you...
+            </p>
+            <p class="mt-1 text-xs text-muted leading-relaxed" x-text="statusMessage">
+              Checking your browser location for nearby road awareness.
+            </p>
+          </div>
+        </div>
+
+        <button
+          id="sr-sidebar-recenter-btn"
+          type="button"
+          @click="recenter()"
+          :disabled="locating"
+          :aria-busy="locating.toString()"
+          class="w-full inline-flex items-center justify-center gap-2 rounded-full bg-primary hover:bg-primary-dark active:bg-primary-dark text-white font-semibold text-sm px-4 py-2.5 min-h-[44px] shadow-sm transition-colors duration-150 disabled:opacity-60 disabled:cursor-not-allowed"
+        >
+          <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M12 2v3"></path>
+            <path d="M12 19v3"></path>
+            <path d="M2 12h3"></path>
+            <path d="M19 12h3"></path>
+          </svg>
+          <span x-text="locating ? 'Locating...' : 'Re-centre on me'">Re-centre on me</span>
+        </button>
+      </section>
+
+      {# Marker Legend (Distinguishes Confirmed Live Location vs Default Fallback) #}
+      <div class="rounded-card bg-canvas border border-border px-4 py-3 flex items-center gap-3">
+        <span class="sr-user-location-pin shrink-0" aria-hidden="true">
+          <span class="sr-user-location-halo"></span>
+          <span class="sr-user-location-core"></span>
+        </span>
+        <div class="min-w-0">
+          <p
+            id="sr-marker-legend-title"
+            class="text-xs font-bold text-ink"
+            x-text="locationMode === 'live' ? 'You are here' : 'Default map location'"
+          >Default map location</p>
+          <p
+            class="text-xs text-muted leading-snug"
+            x-text="locationMode === 'live' ? 'Current browser location (not saved).' : 'Kukatpally Y Junction — default map area, not your confirmed physical location.'"
+          >
+            Kukatpally Y Junction — default map area, not your confirmed physical location.
+          </p>
+        </div>
+      </div>
+
+      {# Clean Workspace State (Hazard Markers & Filters Wired in Issue #13 / B4) #}
+      <div class="flex-1">
+        {{ empty_state(
+          title="Area ready for hazard view",
+          message="Pan or zoom anywhere on the map. Absence of reports in an area does not guarantee the road is hazard-free.",
+          heading_level="h2",
+          extra_classes="!py-6 !px-4 !shadow-none !bg-canvas"
+        ) }}
+      </div>
+
+      {# Compact Privacy & Awareness Notice #}
+      <div class="pt-3 border-t border-border text-xs text-muted space-y-1.5 leading-relaxed">
+        <p>
+          <strong class="font-semibold text-ink">Privacy:</strong> Your live location stays in your
+          browser and is never stored or sent to SafeRoute servers.
+        </p>
+        <p>
+          SafeRoute provides community road-hazard awareness only and does not repair hazards or
+          guarantee safety.
+        </p>
+      </div>
+    </div>
+  </aside>
+
+  {# Full-Height Interactive Leaflet Map Region #}
+  <section
+    aria-label="Interactive road hazard map"
+    class="relative flex-1 min-h-0 h-full w-full"
+  >
+    <div
+      id="saferoute-map"
+      role="region"
+      aria-label="SafeRoute interactive map"
+      tabindex="0"
+      class="sr-map-canvas"
+    ></div>
+
+    {# Floating Accessible "Re-centre on me" Control on Map Canvas #}
+    <div class="absolute bottom-24 right-3 sm:right-4 lg:bottom-6 lg:right-6 z-[450]">
+      <button
+        id="sr-recenter-btn"
+        type="button"
+        @click="recenter()"
+        :disabled="locating"
+        :aria-busy="locating.toString()"
+        class="inline-flex items-center justify-center gap-2 rounded-full bg-surface hover:bg-primary-soft text-primary-dark border border-border font-semibold text-xs sm:text-sm px-4 py-2.5 min-h-[44px] shadow-elevated transition-colors duration-150 disabled:opacity-70 disabled:cursor-not-allowed"
+      >
+        <svg class="h-4 w-4 text-primary shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="3"></circle>
+          <path d="M12 2v3"></path>
+          <path d="M12 19v3"></path>
+          <path d="M2 12h3"></path>
+          <path d="M19 12h3"></path>
+        </svg>
+        <span>Re-centre on me</span>
+      </button>
+    </div>
+
+    {# Map Initialization Error Overlay #}
+    <div
+      x-show="mapError"
+      x-cloak
+      class="absolute inset-0 z-[480] flex items-center justify-center bg-canvas/95 p-6"
+    >
+      <div class="w-full max-w-md">
+        {{ error_state(
+          title="Unable to load the map",
+          message="The interactive map could not be initialized. Please check your connection and reload the page.",
+          retry_label="Reload map",
+          retry_href="/map"
+        ) }}
+      </div>
+    </div>
+  </section>
+</div>
+{% endblock %}
+
+{% block footer %}{% endblock %}

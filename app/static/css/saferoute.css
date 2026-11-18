@@ -142,6 +142,88 @@ body {
   pointer-events: auto;
 }
 
+/* Map Workspace & User Location Marker (Issue #12 — B3) */
+.sr-map-workspace {
+  isolation: isolate;
+  height: calc(100vh - 4rem);
+  height: calc(100dvh - 4rem);
+}
+
+.sr-map-canvas {
+  width: 100%;
+  height: 100%;
+  background-color: var(--sr-primary-soft);
+}
+
+.sr-user-location-marker {
+  background: transparent;
+  border: 0;
+}
+
+.sr-user-location-pin {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+}
+
+.sr-user-location-halo {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background-color: rgba(16, 110, 190, 0.24);
+  border: 2px solid rgba(16, 110, 190, 0.45);
+}
+
+.sr-user-location-core {
+  position: relative;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background-color: var(--sr-primary-dark);
+  border: 2.5px solid #FFFFFF;
+  box-shadow: 0 2px 6px rgba(15, 42, 67, 0.35);
+}
+
+.sr-user-location-core::after {
+  content: "";
+  position: absolute;
+  inset: 3px;
+  border-radius: 999px;
+  background: var(--sr-accent);
+}
+
+.leaflet-container {
+  font-family: var(--sr-font-sans);
+}
+
+.leaflet-popup-content-wrapper {
+  border-radius: var(--sr-radius-card);
+  color: var(--sr-ink);
+  box-shadow: var(--sr-shadow-elevated);
+}
+
+.leaflet-bar {
+  border: 1px solid var(--sr-border) !important;
+  border-radius: 10px !important;
+  overflow: hidden;
+  box-shadow: var(--sr-shadow-card) !important;
+}
+
+.leaflet-bar a {
+  color: var(--sr-ink) !important;
+  width: 38px !important;
+  height: 38px !important;
+  line-height: 38px !important;
+}
+
+.leaflet-bar a:hover {
+  background-color: var(--sr-primary-soft) !important;
+  color: var(--sr-primary-dark) !important;
+}
+
 /* Respect user reduced-motion preferences */
 @media (prefers-reduced-motion: reduce) {
   *,

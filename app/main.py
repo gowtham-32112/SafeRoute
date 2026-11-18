@@ -13,7 +13,12 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.config import Settings, settings
-from app.deps import AuthenticationRedirectRequired, get_optional_user, get_settings
+from app.deps import (
+    AuthenticationRedirectRequired,
+    get_current_user,
+    get_optional_user,
+    get_settings,
+)
 from app.routers.auth import router as auth_router
 from app.routers.reports import router as reports_router
 from app.services.auth import AuthenticatedUser, AuthError
@@ -400,6 +405,38 @@ async def signup_page(
         context={
             "current_user": None,
             "csrf_token": csrf_token,
+        },
+    )
+    _copy_set_cookie_headers(response, template_resp)
+    _copy_set_cookie_headers(csrf_carrier, template_resp)
+    return template_resp
+
+
+@app.get("/map", response_model=None, summary="Authenticated Live Hazard Map Page")
+async def map_page(
+    request: Request,
+    response: Response,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    app_settings: Settings = Depends(get_settings),
+) -> Response:
+    """Render the authenticated SafeRoute map page with approved fallback config."""
+    csrf_token, csrf_carrier = _prepare_page_csrf(request, app_settings)
+    map_config = {
+        "fallbackLat": app_settings.DEFAULT_MAP_LAT,
+        "fallbackLng": app_settings.DEFAULT_MAP_LNG,
+        "fallbackLabel": "Kukatpally Y Junction",
+        "defaultZoom": app_settings.DEFAULT_MAP_ZOOM,
+        "geolocationTimeoutMs": int(app_settings.GEOLOCATION_TIMEOUT_SECONDS * 1000),
+        "boundsDebounceMs": app_settings.MAP_BOUNDS_DEBOUNCE_MS,
+    }
+    template_resp = templates.TemplateResponse(
+        request=request,
+        name="map.html",
+        context={
+            "current_user": current_user,
+            "active_nav": "map",
+            "csrf_token": csrf_token,
+            "map_config": map_config,
         },
     )
     _copy_set_cookie_headers(response, template_resp)
