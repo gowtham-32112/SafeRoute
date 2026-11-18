@@ -12,7 +12,7 @@
 
 ## 1. Scope Summary
 
-Implements the complete Section 7 core relational and PostGIS schema in [supabase/schema.sql](file:///D:/SafeRoute-2/supabase/schema.sql), strictly limited to Stage 3:
+Implements the complete Section 7 core relational and PostGIS schema in [supabase/schema.sql](../supabase/schema.sql), strictly limited to Stage 3:
 
 - **Included**: PostGIS extension guard, 7 core tables, PK/FK/UNIQUE/CHECK/NOT NULL/DEFAULT constraints, spatial GIST and B-tree indexes, `auth.users` signup trigger (`public.handle_new_user()`), and idempotent Realtime publication enrollment for `public.hazard_reports`.
 - **Excluded (Reserved for Stage 4+)**: Spatial RPC functions (`functions.sql`), vote/severity/status triggers (`triggers.sql`), RLS & Storage policies (`policies.sql`), and seed data (`seed.sql`).
