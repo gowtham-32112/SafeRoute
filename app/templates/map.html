@@ -162,16 +162,23 @@
         </button>
       </section>
 
-      {# Marker Legend for User Location #}
+      {# Marker Legend (Distinguishes Confirmed Live Location vs Default Fallback) #}
       <div class="rounded-card bg-canvas border border-border px-4 py-3 flex items-center gap-3">
         <span class="sr-user-location-pin shrink-0" aria-hidden="true">
           <span class="sr-user-location-halo"></span>
           <span class="sr-user-location-core"></span>
         </span>
         <div class="min-w-0">
-          <p class="text-xs font-bold text-ink">You are here</p>
-          <p class="text-xs text-muted leading-snug">
-            Marks your active browser location or the Kukatpally Y Junction fallback.
+          <p
+            id="sr-marker-legend-title"
+            class="text-xs font-bold text-ink"
+            x-text="locationMode === 'live' ? 'You are here' : 'Default map location'"
+          >Default map location</p>
+          <p
+            class="text-xs text-muted leading-snug"
+            x-text="locationMode === 'live' ? 'Current browser location (not saved).' : 'Kukatpally Y Junction — default map area, not your confirmed physical location.'"
+          >
+            Kukatpally Y Junction — default map area, not your confirmed physical location.
           </p>
         </div>
       </div>

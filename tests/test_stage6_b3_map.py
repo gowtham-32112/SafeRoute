@@ -162,7 +162,24 @@ def test_map_js_serves_cleanly_and_enforces_strict_location_privacy():
     assert "78.4138" not in js_text
     assert "sr-map-config" in js_text
     assert "isValidCoordinates" in js_text
-    assert "You are here" in js_text
+    assert 'LIVE_MARKER_TITLE = "You are here"' in js_text
+    assert 'FALLBACK_MARKER_TITLE = "Default map location"' in js_text
+    assert "not your confirmed physical location" in js_text
+    assert "userMarker.setIcon(" in js_text
+
+
+def test_map_template_distinguishes_live_and_fallback_marker_labels():
+    app.dependency_overrides[get_current_user] = _ordinary_user
+    client = TestClient(app)
+
+    resp = client.get("/map", headers={"Accept": "text/html"})
+    assert resp.status_code == 200
+    html = resp.text
+
+    assert 'id="sr-marker-legend-title"' in html
+    assert ">Default map location</p>" in html
+    assert "locationMode === 'live' ? 'You are here' : 'Default map location'" in html
+    assert "not your confirmed physical location" in html
 
 
 def test_map_template_and_css_follow_b1_light_theme_and_mint_contrast_rules():

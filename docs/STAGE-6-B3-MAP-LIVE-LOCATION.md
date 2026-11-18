@@ -38,8 +38,10 @@
 1. **Map Initialization**: Initializes a single Leaflet 1.9.4 map instance with OpenStreetMap tiles (`maxZoom: 19`), guarded against duplicate initialization and duplicate event listeners. Places a single `"You are here"` marker at the approved fallback immediately so the map is interactive right away.
 2. **Browser Live Location & 5-Second Timeout**: Calls `navigator.geolocation.getCurrentPosition(...)` with `{ timeout: 5000, maximumAge: 60000 }` paired with a defensive 5-second JS timer and monotonic sequence counter so stale callbacks are ignored and the UI can never hang in a loading state.
 3. **Graceful Fallbacks**: Permission denied (`code 1`), position unavailable (`code 2`), timeout (`code 3` or timer expiry), unsupported Geolocation API, or invalid/non-finite/out-of-range coordinates all centre cleanly on Kukatpally Y Junction (`17.4849, 78.4138`) with a clear, non-alarming status message.
-4. **"You are here" Marker**: Distinctive primary-blue/mint user-location `L.divIcon` (visually distinct from hazard severity pins) with accessible title/alt and `"You are here"` popup. Updated via `setLatLng()` so repeated re-centre clicks never create duplicate markers.
-5. **"Re-centre on me" Button**: Present both as an unobstructed floating control on the map canvas and inside the sidebar/bottom sheet. If a valid live user location has already been obtained in the current session, re-centres immediately without unnecessary re-prompts; otherwise requests browser geolocation again and falls back cleanly on failure.
+4. **Location Marker Distinction (Live vs Fallback)**: Distinctive primary-blue/mint `L.divIcon` (visually distinct from hazard severity pins) updated in place via `setLatLng()`, `setIcon()`, and `setPopupContent()` so repeated updates never create duplicate markers:
+   - **Live browser location confirmed**: Marker title/alt `"You are here"`, popup heading `"You are here"` noting *"Current browser location (not saved)."*
+   - **Pending initial geolocation or fallback active**: Marker title/alt `"Default map location"`, popup heading `"Default map location"` noting *"Kukatpally Y Junction — default map area, not your confirmed physical location."*
+5. **"Re-centre on me" Button**: Present both as an unobstructed floating control on the map canvas and inside the sidebar/bottom sheet. Re-requests browser geolocation (updating the single existing marker between `"You are here"` and `"Default map location"` if live location succeeds or falls back).
 
 ---
 

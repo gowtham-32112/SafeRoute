@@ -82,11 +82,25 @@
     notifyState();
   }
 
-  function buildUserLocationIcon() {
+  var LIVE_MARKER_TITLE = "You are here";
+  var FALLBACK_MARKER_TITLE = "Default map location";
+
+  function getMarkerTitle(isLive) {
+    return isLive ? LIVE_MARKER_TITLE : FALLBACK_MARKER_TITLE;
+  }
+
+  function sanitizeText(text) {
+    return String(text || "").replace(/[<>&"]/g, "");
+  }
+
+  function buildUserLocationIcon(isLive) {
+    var ariaLabel = getMarkerTitle(isLive);
     return window.L.divIcon({
       className: "sr-user-location-marker",
       html:
-        '<div class="sr-user-location-pin" aria-label="You are here">' +
+        '<div class="sr-user-location-pin" aria-label="' +
+        ariaLabel +
+        '">' +
         '<span class="sr-user-location-halo"></span>' +
         '<span class="sr-user-location-core"></span>' +
         "</div>",
@@ -97,14 +111,19 @@
   }
 
   function buildPopupHtml(isLive, fallbackLabel) {
+    var heading = isLive ? LIVE_MARKER_TITLE : FALLBACK_MARKER_TITLE;
+    var safeFallback = sanitizeText(fallbackLabel);
     var subtitle = isLive
-      ? "Current browser location (not saved)"
-      : "Default area: " + fallbackLabel;
+      ? "Current browser location (not saved)."
+      : safeFallback +
+        " — default map area, not your confirmed physical location.";
     return (
       '<div class="text-sm leading-snug">' +
-      '<p class="font-bold text-primary-dark">You are here</p>' +
+      '<p class="font-bold text-primary-dark">' +
+      heading +
+      "</p>" +
       '<p class="text-xs text-muted mt-0.5">' +
-      subtitle.replace(/[<>&"]/g, "") +
+      subtitle +
       "</p>" +
       "</div>"
     );
@@ -114,17 +133,30 @@
     if (!mapInstance || !window.L) {
       return;
     }
+    var markerTitle = getMarkerTitle(isLive);
     var popupHtml = buildPopupHtml(isLive, currentConfig.fallbackLabel);
     if (userMarker) {
       userMarker.setLatLng([lat, lng]);
+      userMarker.options.title = markerTitle;
+      userMarker.options.alt = markerTitle;
+      userMarker.setIcon(buildUserLocationIcon(isLive));
+      var el =
+        typeof userMarker.getElement === "function"
+          ? userMarker.getElement()
+          : null;
+      if (el) {
+        el.setAttribute("title", markerTitle);
+        el.setAttribute("aria-label", markerTitle);
+      }
       userMarker.setPopupContent(popupHtml);
       return;
     }
     userMarker = window.L.marker([lat, lng], {
-      icon: buildUserLocationIcon(),
-      title: "You are here",
-      alt: "You are here",
+      icon: buildUserLocationIcon(isLive),
+      title: markerTitle,
+      alt: markerTitle,
       zIndexOffset: 1000,
+      isSafeRouteLocationMarker: true,
     });
     userMarker.bindPopup(popupHtml);
     userMarker.addTo(mapInstance);
@@ -149,6 +181,7 @@
 
   function applyFallback(reasonTitle, reasonMessage, animate) {
     clearActiveTimeout();
+    lastLiveLocation = null;
     centerMapOn(
       currentConfig.fallbackLat,
       currentConfig.fallbackLng,
@@ -300,20 +333,6 @@
     if (!currentConfig || !mapInstance) {
       return;
     }
-    if (
-      lastLiveLocation &&
-      isValidCoordinates(lastLiveLocation.lat, lastLiveLocation.lng)
-    ) {
-      centerMapOn(lastLiveLocation.lat, lastLiveLocation.lng, true, true);
-      updateState({
-        locating: false,
-        locationMode: "live",
-        statusTitle: "Centered on your location",
-        statusMessage:
-          "Re-centred on your current area. Your live location stays in your browser and is never saved.",
-      });
-      return;
-    }
     requestBrowserLocation(true);
   }
 
@@ -428,7 +447,7 @@
       if (
         layer &&
         layer.options &&
-        layer.options.title === "You are here"
+        layer.options.isSafeRouteLocationMarker === true
       ) {
         count += 1;
       }
