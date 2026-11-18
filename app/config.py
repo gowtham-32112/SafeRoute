@@ -58,7 +58,11 @@ class Settings(BaseSettings):
     ESCALATION_CONFIRM_THRESHOLD: int = 5
     ESCALATION_SEVERITY_THRESHOLD: int = 70
     DUPLICATE_RADIUS_METERS: float = 30.0
+    DUPLICATE_WINDOW_DAYS: int = 30
     ROUTE_HAZARD_BUFFER_METERS: float = 25.0
+
+    # Request Resource Limits (5 MB max image + 1 MB multipart/form overhead)
+    MAX_REQUEST_BODY_BYTES: int = 6 * 1024 * 1024
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -81,6 +85,22 @@ class Settings(BaseSettings):
         if not value:
             return "development"
         return str(value).strip().lower()
+
+    @field_validator("MAX_REQUEST_BODY_BYTES")
+    @classmethod
+    def _validate_max_request_body_bytes(cls, value: int) -> int:
+        """Ensure MAX_REQUEST_BODY_BYTES is a positive byte limit."""
+        if value < 1024:
+            raise ValueError("MAX_REQUEST_BODY_BYTES must be at least 1024 bytes.")
+        return value
+
+    @field_validator("DUPLICATE_RADIUS_METERS")
+    @classmethod
+    def _validate_duplicate_radius(cls, value: float) -> float:
+        """Keep server-side duplicate search radius bounded to the approved 30m rule."""
+        if value <= 0.0 or value > 30.0:
+            raise ValueError("DUPLICATE_RADIUS_METERS must be > 0 and <= 30.0 metres.")
+        return value
 
     @model_validator(mode="after")
     def _validate_production_secret_key(self) -> "Settings":

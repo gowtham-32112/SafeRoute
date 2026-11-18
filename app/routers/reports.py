@@ -5,16 +5,14 @@ from typing import Any, Dict, Optional, Union
 from fastapi import (
     APIRouter,
     Depends,
-    File,
-    Form,
     HTTPException,
     Query,
     Request,
-    UploadFile,
     status,
 )
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import ValidationError
+from starlette.datastructures import FormData, UploadFile as StarletteUploadFile
 
 from app.config import Settings
 from app.deps import (
@@ -52,10 +50,13 @@ async def _parse_json_or_form(request: Request) -> Dict[str, Any]:
         or "multipart/form-data" in content_type
     ):
         form = await request.form()
-        return {k: str(v) for k, v in form.items()}
+        try:
+            return {k: str(v) for k, v in form.items() if k != "csrf_token"}
+        finally:
+            await form.close()
     try:
         body = await request.json()
-    except Exception as exc:
+    except (ValueError, UnicodeDecodeError) as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid JSON request body.",
@@ -68,6 +69,28 @@ async def _parse_json_or_form(request: Request) -> Dict[str, Any]:
     return body
 
 
+def _form_str(form: FormData, key: str) -> Optional[str]:
+    """Extract an optional string field from FormData."""
+    val = form.get(key)
+    if val is None or isinstance(val, StarletteUploadFile):
+        return None
+    return str(val)
+
+
+def _form_float(form: FormData, key: str) -> Optional[float]:
+    """Extract an optional float field from FormData, raising 400 on bad numbers."""
+    raw = _form_str(form, key)
+    if raw is None or not raw.strip():
+        return None
+    try:
+        return float(raw.strip())
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Field '{key}' must be a valid numeric value.",
+        ) from exc
+
+
 @router.post(
     "/reports",
     status_code=status.HTTP_201_CREATED,
@@ -75,57 +98,110 @@ async def _parse_json_or_form(request: Request) -> Dict[str, Any]:
     summary="Submit a New Hazard Report (or Confirm Existing Duplicate)",
 )
 async def submit_hazard_report(
+    request: Request,
     ctx: AuthenticatedContext = Depends(get_authenticated_context),
     _csrf: None = Depends(require_csrf),
-    category: Optional[str] = Form(default=None),
-    description: Optional[str] = Form(default=None),
-    lat: Optional[float] = Form(default=None),
-    lng: Optional[float] = Form(default=None),
-    address_text: Optional[str] = Form(default=None),
-    image: Optional[UploadFile] = File(default=None),
-    duplicate_action: Optional[str] = Form(default=None),
-    existing_report_id: Optional[str] = Form(default=None),
     app_settings: Settings = Depends(get_settings),
 ) -> Union[ReportDetailResponse, JSONResponse]:
     """Create a hazard report with EXIF-stripped image upload, or confirm a duplicate.
 
+    Request-body size is enforced first by RequestSizeLimitMiddleware (HTTP 413)
+    before routing, authentication, or multipart parsing. Because Form/File
+    parameters are parsed inside this handler rather than in the FastAPI route
+    signature, authentication (get_authenticated_context) executes before
+    request.form() for bounded requests.
+
     Never trusts client-supplied reporter_id, status, severity, counts, AI fields,
-    or duplicate_of links. Enforces 5 MB max upload size and JPEG/PNG/WebP formats.
+    duplicate_of links, or client-computed duplicate distances.
     """
-    # Support "Same hazard, add my confirmation" directly from report submission flow
-    if (duplicate_action or "").strip().lower() == "same_hazard":
-        if not existing_report_id or not existing_report_id.strip():
+    content_type = request.headers.get("content-type", "").lower()
+    if (
+        "multipart/form-data" not in content_type
+        and "application/x-www-form-urlencoded" not in content_type
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Content-Type must be multipart/form-data or form-urlencoded.",
+        )
+
+    form = await request.form()
+    try:
+        category = _form_str(form, "category")
+        description = _form_str(form, "description")
+        lat = _form_float(form, "lat")
+        lng = _form_float(form, "lng")
+        address_text = _form_str(form, "address_text")
+        duplicate_action = _form_str(form, "duplicate_action")
+        existing_report_id = _form_str(form, "existing_report_id")
+
+        # Support "Same hazard, add my confirmation" with full server-side revalidation
+        if (duplicate_action or "").strip().lower() == "same_hazard":
+            if (
+                not existing_report_id
+                or not existing_report_id.strip()
+                or not category
+                or lat is None
+                or lng is None
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        "Fields 'existing_report_id', 'category', 'lat', and 'lng' "
+                        "are required when selecting 'same_hazard'."
+                    ),
+                )
+            try:
+                confirm_payload = ConfirmDuplicateRequest.model_validate(
+                    {
+                        "report_id": existing_report_id,
+                        "category": category.strip(),
+                        "lat": lat,
+                        "lng": lng,
+                    }
+                )
+            except ValidationError as exc:
+                first_msg = exc.errors()[0].get(
+                    "msg", "Invalid duplicate confirmation parameters."
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=first_msg,
+                ) from exc
+
+            confirmed = confirm_existing_duplicate(
+                report_id=confirm_payload.report_id,
+                lat=confirm_payload.lat,
+                lng=confirm_payload.lng,
+                category=confirm_payload.category,
+                user_id=ctx.user.id,
+                access_token=ctx.access_token,
+                app_settings=app_settings,
+            )
+            return JSONResponse(
+                status_code=status.HTTP_200_OK,
+                content=confirmed.model_dump(),
+            )
+
+        if not category or not description or lat is None or lng is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="existing_report_id is required when selecting 'same_hazard'.",
+                detail="Fields 'category', 'description', 'lat', and 'lng' are required.",
             )
-        confirmed = confirm_existing_duplicate(
-            report_id=existing_report_id,
-            user_id=ctx.user.id,
-            access_token=ctx.access_token,
-            app_settings=app_settings,
-        )
-        return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content=confirmed.model_dump(),
-        )
 
-    if not category or not description or lat is None or lng is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Fields 'category', 'description', 'lat', and 'lng' are required.",
-        )
+        raw_image = form.get("image")
+        if not isinstance(raw_image, StarletteUploadFile):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="An evidence photograph ('image') is required.",
+            )
 
-    if image is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="An evidence photograph ('image') is required.",
-        )
-
-    # Read up to MAX_IMAGE_SIZE_BYTES + 1 bytes to bound memory and return 413 early
-    raw_bytes = await image.read(MAX_IMAGE_SIZE_BYTES + 1)
-    if len(raw_bytes) > MAX_IMAGE_SIZE_BYTES:
-        raise ImageTooLargeError()
+        # Read up to MAX_IMAGE_SIZE_BYTES + 1 bytes to enforce exact 5 MB image cap
+        raw_bytes = await raw_image.read(MAX_IMAGE_SIZE_BYTES + 1)
+        if len(raw_bytes) > MAX_IMAGE_SIZE_BYTES:
+            raise ImageTooLargeError()
+        image_content_type = raw_image.content_type
+    finally:
+        await form.close()
 
     return create_hazard_report(
         user_id=ctx.user.id,
@@ -135,7 +211,7 @@ async def submit_hazard_report(
         lat=lat,
         lng=lng,
         image_bytes=raw_bytes,
-        image_content_type=image.content_type,
+        image_content_type=image_content_type,
         address_text=address_text,
         app_settings=app_settings,
     )
@@ -152,7 +228,7 @@ async def check_duplicate_reports(
     _csrf: None = Depends(require_csrf),
     app_settings: Settings = Depends(get_settings),
 ) -> DuplicateCheckResponse:
-    """Query authoritative PostGIS nearby_reports function for potential duplicates."""
+    """Query authoritative PostGIS nearby_reports function at fixed 30m radius."""
     raw_data = await _parse_json_or_form(request)
     try:
         payload = DuplicateCheckRequest.model_validate(raw_data)
@@ -181,12 +257,14 @@ async def confirm_duplicate_report(
     _csrf: None = Depends(require_csrf),
     app_settings: Settings = Depends(get_settings),
 ) -> ConfirmDuplicateResponse:
-    """Create a 'confirm' vote on an existing hazard report."""
+    """Revalidate duplicate criteria via PostGIS and create a 'confirm' vote."""
     raw_data = await _parse_json_or_form(request)
     try:
         payload = ConfirmDuplicateRequest.model_validate(raw_data)
     except ValidationError as exc:
-        first_msg = exc.errors()[0].get("msg", "Invalid report_id.")
+        first_msg = exc.errors()[0].get(
+            "msg", "Invalid duplicate confirmation parameters."
+        )
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=first_msg,
@@ -194,6 +272,9 @@ async def confirm_duplicate_report(
 
     return confirm_existing_duplicate(
         report_id=payload.report_id,
+        lat=payload.lat,
+        lng=payload.lng,
+        category=payload.category,
         user_id=ctx.user.id,
         access_token=ctx.access_token,
         app_settings=app_settings,

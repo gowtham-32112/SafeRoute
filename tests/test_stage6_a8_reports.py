@@ -5,12 +5,14 @@ never mutate the live Supabase project or real storage buckets.
 """
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 import io
 import struct
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 import uuid
 
+from fastapi import Request
 from fastapi.testclient import TestClient
 from PIL import ExifTags, Image
 import pytest
@@ -404,6 +406,163 @@ def test_post_reports_rolls_back_cleanly_on_storage_and_db_failures():
 # ==============================================================================
 
 
+def _recent_iso(days_ago: int = 1) -> str:
+    return (datetime.now(timezone.utc) - timedelta(days=days_ago)).isoformat()
+
+
+def _make_duplicate_confirm_mock(
+    *,
+    reporter_id: str = USER_A_ID,
+    category: str = "pothole",
+    status_val: str = "open",
+    days_ago: int = 1,
+    nearby_matches: list | None = None,
+) -> tuple[MagicMock, MagicMock, MagicMock]:
+    """Build mocked Supabase client for duplicate confirmation revalidation tests."""
+    created_iso = _recent_iso(days_ago)
+    mock_client = MagicMock()
+    hr_tbl = MagicMock()
+    hr_tbl.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = (
+        SimpleNamespace(
+            data={
+                "id": REPORT_1_ID,
+                "reporter_id": reporter_id,
+                "category": category,
+                "status": status_val,
+                "created_at": created_iso,
+            }
+        )
+    )
+    ver_tbl = MagicMock()
+    ver_tbl.insert.return_value.execute.return_value = SimpleNamespace(data=[{}])
+    mock_client.table.side_effect = lambda name: hr_tbl if name == "hazard_reports" else ver_tbl
+
+    if nearby_matches is None:
+        nearby_matches = [
+            {
+                "id": REPORT_1_ID,
+                "reporter_id": reporter_id,
+                "report_category": category,
+                "status": status_val,
+                "created_at": created_iso,
+                "distance_m": 12.5,
+            }
+        ]
+    mock_client.rpc.return_value.execute.return_value = SimpleNamespace(data=nearby_matches)
+    return mock_client, hr_tbl, ver_tbl
+
+
+def test_request_size_limit_middleware_rejects_oversized_content_length_and_chunked_uploads():
+    """Finding A: Enforce configurable request body cap BEFORE auth/CSRF/multipart parsing."""
+    small_limit_settings = Settings(
+        _env_file=None,
+        SUPABASE_URL="https://test-project.supabase.co",
+        SUPABASE_ANON_KEY="sb_publishable_test_dummy",
+        SUPABASE_SERVICE_KEY="",
+        SECRET_KEY="unit-test-secret-key",
+        ENVIRONMENT="development",
+        MAX_REQUEST_BODY_BYTES=2048,
+    )
+    app.dependency_overrides[get_settings] = lambda: small_limit_settings
+    client = TestClient(app)
+
+    # 1. Oversized Content-Length multipart request rejected with 413 even when unauthenticated
+    with patch.object(Request, "form", new_callable=AsyncMock) as spy_form:
+        r_unauth_big = client.post(
+            "/reports",
+            headers={"Accept": "application/json"},
+            data={"category": "pothole", "description": "x" * 3000},
+        )
+    assert r_unauth_big.status_code == 413
+    spy_form.assert_not_called()
+
+    # 2. Oversized authenticated multipart request also rejected with 413 before Request.form()
+    app.dependency_overrides[get_authenticated_context] = lambda: _auth_ctx(USER_A_ID)
+    headers = _csrf_headers(client)
+    with patch.object(Request, "form", new_callable=AsyncMock) as spy_form_auth:
+        r_auth_big = client.post(
+            "/reports",
+            headers=headers,
+            data={"category": "pothole", "description": "Test", "lat": "17.48", "lng": "78.41"},
+            files={"image": ("big.png", b"A" * 4096, "image/png")},
+        )
+    assert r_auth_big.status_code == 413
+    spy_form_auth.assert_not_called()
+
+    # 3. Unauthenticated bounded POST /reports returns 401 BEFORE Request.form() is invoked
+    app.dependency_overrides.pop(get_authenticated_context, None)
+    with patch.object(Request, "form", new_callable=AsyncMock) as spy_form_unauth:
+        r_unauth_small = client.post(
+            "/reports",
+            headers={"Accept": "application/json"},
+            data={"category": "pothole"},
+        )
+    assert r_unauth_small.status_code == 401
+    spy_form_unauth.assert_not_called()
+
+    # 4. Chunked / streaming request without Content-Length exceeding cap -> 413 mid-stream
+    app.dependency_overrides[get_authenticated_context] = lambda: _auth_ctx(USER_A_ID)
+
+    def _oversized_chunks():
+        yield b"--boundary\r\nContent-Disposition: form-data; name=\"description\"\r\n\r\n"
+        for _ in range(5):
+            yield b"Z" * 1024
+        yield b"\r\n--boundary--\r\n"
+
+    r_chunked = client.post(
+        "/reports",
+        headers={
+            **headers,
+            "Content-Type": "multipart/form-data; boundary=boundary",
+        },
+        content=_oversized_chunks(),
+    )
+    assert r_chunked.status_code == 413
+
+    # 5. Spoofed small Content-Length header with oversized streamed body -> 413 via ASGI receive
+    async def _call_asgi_spoofed_content_length() -> int:
+        sent_messages: list[dict] = []
+        chunks = [
+            {"type": "http.request", "body": b"X" * 1500, "more_body": True},
+            {"type": "http.request", "body": b"Y" * 1500, "more_body": False},
+        ]
+        idx = 0
+
+        async def fake_receive():
+            nonlocal idx
+            if idx < len(chunks):
+                msg = chunks[idx]
+                idx += 1
+                return msg
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def fake_send(message):
+            sent_messages.append(message)
+
+        scope = {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "http",
+            "path": "/reports/check-duplicate",
+            "raw_path": b"/reports/check-duplicate",
+            "query_string": b"",
+            "headers": [
+                (b"host", b"testserver"),
+                (b"content-type", b"application/json"),
+                (b"content-length", b"100"),  # Spoofed small length!
+            ],
+            "client": ("127.0.0.1", 12345),
+            "server": ("testserver", 80),
+        }
+        await app(scope, fake_receive, fake_send)
+        start = next(m for m in sent_messages if m["type"] == "http.response.start")
+        return int(start["status"])
+
+    assert asyncio.run(_call_asgi_spoofed_content_length()) == 413
+
+
 def test_check_duplicate_calls_nearby_reports_rpc_and_maps_matches():
     app.dependency_overrides[get_authenticated_context] = lambda: _auth_ctx(USER_B_ID)
     mock_client = MagicMock()
@@ -422,7 +581,7 @@ def test_check_duplicate_calls_nearby_reports_rpc_and_maps_matches():
                 "confidence": "low",
                 "confirm_count": 0,
                 "dispute_count": 0,
-                "created_at": "2026-11-18T04:00:00Z",
+                "created_at": _recent_iso(1),
                 "distance_m": 12.345,
             }
         ]
@@ -442,6 +601,7 @@ def test_check_duplicate_calls_nearby_reports_rpc_and_maps_matches():
     body = resp.json()
     assert body["has_duplicates"] is True
     assert body["radius_m"] == 30.0
+    assert body["lookback_days"] == 30
     assert len(body["matches"]) == 1
     assert body["matches"][0]["distance_m"] == 12.35
     mock_client.rpc.assert_called_once_with(
@@ -450,20 +610,56 @@ def test_check_duplicate_calls_nearby_reports_rpc_and_maps_matches():
     )
 
 
+def test_check_duplicate_rejects_client_radius_override_and_locks_30m():
+    """Finding B: Reject any attempt to override the fixed 30-metre duplicate radius."""
+    app.dependency_overrides[get_authenticated_context] = lambda: _auth_ctx(USER_B_ID)
+    mock_client = MagicMock()
+    mock_client.rpc.return_value.execute.return_value = SimpleNamespace(data=[])
+    client = TestClient(app)
+
+    with patch(
+        "app.services.duplicates.create_authenticated_supabase_client",
+        return_value=mock_client,
+    ):
+        # Attempting to increase or alter radius_m must be rejected with 422 (zero RPC calls)
+        for bad_radius in (30.1, 100, 500, 50000, 0, -10, 15):
+            r_bad = client.post(
+                "/reports/check-duplicate",
+                json={
+                    "lat": 17.48495,
+                    "lng": 78.41385,
+                    "category": "pothole",
+                    "radius_m": bad_radius,
+                },
+            )
+            assert r_bad.status_code == 422, f"Expected 422 for radius_m={bad_radius}"
+        mock_client.rpc.assert_not_called()
+
+        # Explicit 30.0 matches server rule and succeeds
+        r_exact = client.post(
+            "/reports/check-duplicate",
+            json={
+                "lat": 17.48495,
+                "lng": 78.41385,
+                "category": "pothole",
+                "radius_m": 30,
+            },
+        )
+        assert r_exact.status_code == 200
+        assert r_exact.json()["radius_m"] == 30.0
+        mock_client.rpc.assert_called_once_with(
+            "nearby_reports",
+            {"lat": 17.48495, "lng": 78.41385, "radius_m": 30.0, "category": "pothole"},
+        )
+
+
 def test_same_hazard_creates_confirm_vote_and_blocks_self_and_duplicate_votes():
     client = TestClient(app)
     headers = _csrf_headers(client)
 
     # 1. Valid confirmation by User B on User A's report (via POST /reports duplicate_action)
     app.dependency_overrides[get_authenticated_context] = lambda: _auth_ctx(USER_B_ID)
-    mock_client = MagicMock()
-    hr_tbl = MagicMock()
-    hr_tbl.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = (
-        SimpleNamespace(data={"id": REPORT_1_ID, "reporter_id": USER_A_ID, "status": "open"})
-    )
-    ver_tbl = MagicMock()
-    ver_tbl.insert.return_value.execute.return_value = SimpleNamespace(data=[{}])
-    mock_client.table.side_effect = lambda name: hr_tbl if name == "hazard_reports" else ver_tbl
+    mock_client, hr_tbl, ver_tbl = _make_duplicate_confirm_mock()
 
     with patch(
         "app.services.duplicates.create_authenticated_supabase_client",
@@ -472,37 +668,278 @@ def test_same_hazard_creates_confirm_vote_and_blocks_self_and_duplicate_votes():
         r_ok = client.post(
             "/reports",
             headers=headers,
-            data={"duplicate_action": "same_hazard", "existing_report_id": REPORT_1_ID},
+            data={
+                "duplicate_action": "same_hazard",
+                "existing_report_id": REPORT_1_ID,
+                "category": "pothole",
+                "lat": "17.48495",
+                "lng": "78.41385",
+            },
         )
     assert r_ok.status_code == 200
     assert r_ok.json()["action"] == "confirmed_existing"
     assert r_ok.json()["vote"] == "confirm"
     # Never created a second hazard_reports row
     hr_tbl.insert.assert_not_called()
+    # Authoritatively revalidated via nearby_reports RPC at fixed 30m
+    mock_client.rpc.assert_called_once_with(
+        "nearby_reports",
+        {"lat": 17.48495, "lng": 78.41385, "radius_m": 30.0, "category": "pothole"},
+    )
     ver_tbl.insert.assert_called_once_with(
         {"report_id": REPORT_1_ID, "user_id": USER_B_ID, "vote": "confirm"}
     )
 
-    # 2. Self-confirmation by User A rejected with 403
+    # 2. Self-confirmation by User A rejected with 403 (zero vote inserted)
     app.dependency_overrides[get_authenticated_context] = lambda: _auth_ctx(USER_A_ID)
+    mock_self, _, ver_self = _make_duplicate_confirm_mock()
     with patch(
         "app.services.duplicates.create_authenticated_supabase_client",
-        return_value=mock_client,
+        return_value=mock_self,
     ):
-        r_self = client.post("/reports/confirm-duplicate", json={"report_id": REPORT_1_ID})
+        r_self = client.post(
+            "/reports/confirm-duplicate",
+            headers=headers,
+            json={
+                "report_id": REPORT_1_ID,
+                "category": "pothole",
+                "lat": 17.48495,
+                "lng": 78.41385,
+            },
+        )
     assert r_self.status_code == 403
+    ver_self.insert.assert_not_called()
 
     # 3. Duplicate vote by User B rejected with 409 Conflict
     app.dependency_overrides[get_authenticated_context] = lambda: _auth_ctx(USER_B_ID)
-    ver_tbl.insert.return_value.execute.side_effect = RuntimeError(
+    mock_dup, _, ver_dup = _make_duplicate_confirm_mock()
+    ver_dup.insert.return_value.execute.side_effect = RuntimeError(
         "duplicate key value violates unique constraint verifications_pkey (23505)"
     )
     with patch(
         "app.services.duplicates.create_authenticated_supabase_client",
-        return_value=mock_client,
+        return_value=mock_dup,
     ):
-        r_dup = client.post("/reports/confirm-duplicate", json={"report_id": REPORT_1_ID})
+        r_dup = client.post(
+            "/reports/confirm-duplicate",
+            headers=headers,
+            json={
+                "report_id": REPORT_1_ID,
+                "category": "pothole",
+                "lat": 17.48495,
+                "lng": 78.41385,
+            },
+        )
     assert r_dup.status_code == 409
+
+
+def test_confirm_duplicate_revalidates_all_duplicate_criteria_on_both_paths():
+    """Finding C: Independently revalidate category, 30m distance, 30d age, status, and inputs."""
+    app.dependency_overrides[get_authenticated_context] = lambda: _auth_ctx(USER_B_ID)
+    client = TestClient(app)
+    headers = _csrf_headers(client)
+
+    # 1. Valid same-category report within 30m via POST /reports/confirm-duplicate -> 200
+    mock_valid, _, ver_valid = _make_duplicate_confirm_mock()
+    with patch(
+        "app.services.duplicates.create_authenticated_supabase_client",
+        return_value=mock_valid,
+    ):
+        r_valid = client.post(
+            "/reports/confirm-duplicate",
+            headers=headers,
+            json={
+                "report_id": REPORT_1_ID,
+                "category": "pothole",
+                "lat": 17.48495,
+                "lng": 78.41385,
+            },
+        )
+    assert r_valid.status_code == 200
+    ver_valid.insert.assert_called_once()
+
+    # 2. Different category -> 400 on BOTH endpoints, zero vote inserted
+    mock_diff_cat, _, ver_diff_cat = _make_duplicate_confirm_mock(category="streetlight")
+    with patch(
+        "app.services.duplicates.create_authenticated_supabase_client",
+        return_value=mock_diff_cat,
+    ):
+        r_cat_1 = client.post(
+            "/reports/confirm-duplicate",
+            headers=headers,
+            json={
+                "report_id": REPORT_1_ID,
+                "category": "pothole",
+                "lat": 17.48495,
+                "lng": 78.41385,
+            },
+        )
+        r_cat_2 = client.post(
+            "/reports",
+            headers=headers,
+            data={
+                "duplicate_action": "same_hazard",
+                "existing_report_id": REPORT_1_ID,
+                "category": "pothole",
+                "lat": "17.48495",
+                "lng": "78.41385",
+            },
+        )
+    assert r_cat_1.status_code == 400
+    assert r_cat_2.status_code == 400
+    ver_diff_cat.insert.assert_not_called()
+
+    # 3. Outside 30 metres (nearby_reports returns empty) even with forged client distance_m=5
+    mock_far, _, ver_far = _make_duplicate_confirm_mock(nearby_matches=[])
+    with patch(
+        "app.services.duplicates.create_authenticated_supabase_client",
+        return_value=mock_far,
+    ):
+        r_far_1 = client.post(
+            "/reports/confirm-duplicate",
+            headers=headers,
+            json={
+                "report_id": REPORT_1_ID,
+                "category": "pothole",
+                "lat": 17.5000,
+                "lng": 78.4500,
+                "distance_m": 5.0,  # Forged client-side distance must NEVER be trusted
+            },
+        )
+        r_far_2 = client.post(
+            "/reports",
+            headers=headers,
+            data={
+                "duplicate_action": "same_hazard",
+                "existing_report_id": REPORT_1_ID,
+                "category": "pothole",
+                "lat": "17.5000",
+                "lng": "78.4500",
+                "distance_m": "5.0",
+            },
+        )
+    assert r_far_1.status_code == 400
+    assert r_far_2.status_code == 400
+    ver_far.insert.assert_not_called()
+
+    # 4. Report older than 30 days -> 400 on BOTH endpoints, zero vote inserted
+    mock_old, _, ver_old = _make_duplicate_confirm_mock(days_ago=31, nearby_matches=[])
+    with patch(
+        "app.services.duplicates.create_authenticated_supabase_client",
+        return_value=mock_old,
+    ):
+        r_old_1 = client.post(
+            "/reports/confirm-duplicate",
+            headers=headers,
+            json={
+                "report_id": REPORT_1_ID,
+                "category": "pothole",
+                "lat": 17.48495,
+                "lng": 78.41385,
+            },
+        )
+        r_old_2 = client.post(
+            "/reports",
+            headers=headers,
+            data={
+                "duplicate_action": "same_hazard",
+                "existing_report_id": REPORT_1_ID,
+                "category": "pothole",
+                "lat": "17.48495",
+                "lng": "78.41385",
+            },
+        )
+    assert r_old_1.status_code == 400
+    assert r_old_2.status_code == 400
+    ver_old.insert.assert_not_called()
+
+    # 5. Fixed report -> 400 on BOTH endpoints, zero vote inserted
+    mock_fixed, _, ver_fixed = _make_duplicate_confirm_mock(status_val="fixed", nearby_matches=[])
+    with patch(
+        "app.services.duplicates.create_authenticated_supabase_client",
+        return_value=mock_fixed,
+    ):
+        r_fix_1 = client.post(
+            "/reports/confirm-duplicate",
+            headers=headers,
+            json={
+                "report_id": REPORT_1_ID,
+                "category": "pothole",
+                "lat": 17.48495,
+                "lng": 78.41385,
+            },
+        )
+        r_fix_2 = client.post(
+            "/reports",
+            headers=headers,
+            data={
+                "duplicate_action": "same_hazard",
+                "existing_report_id": REPORT_1_ID,
+                "category": "pothole",
+                "lat": "17.48495",
+                "lng": "78.41385",
+            },
+        )
+    assert r_fix_1.status_code == 400
+    assert r_fix_2.status_code == 400
+    ver_fixed.insert.assert_not_called()
+
+    # 6. Missing or forged coordinates/category on BOTH endpoints -> 422 / 400, zero DB calls
+    mock_unused = MagicMock()
+    with patch(
+        "app.services.duplicates.create_authenticated_supabase_client",
+        return_value=mock_unused,
+    ):
+        # Missing lat/lng/category on /reports/confirm-duplicate
+        assert client.post(
+            "/reports/confirm-duplicate",
+            headers=headers,
+            json={"report_id": REPORT_1_ID},
+        ).status_code == 422
+        # Out-of-range lat on /reports/confirm-duplicate
+        assert client.post(
+            "/reports/confirm-duplicate",
+            headers=headers,
+            json={"report_id": REPORT_1_ID, "category": "pothole", "lat": 99.0, "lng": 78.41},
+        ).status_code == 422
+        # Forged category on /reports/confirm-duplicate
+        assert client.post(
+            "/reports/confirm-duplicate",
+            headers=headers,
+            json={"report_id": REPORT_1_ID, "category": "sinkhole", "lat": 17.48, "lng": 78.41},
+        ).status_code == 422
+        # Missing coordinates/category on POST /reports duplicate_action=same_hazard
+        assert client.post(
+            "/reports",
+            headers=headers,
+            data={"duplicate_action": "same_hazard", "existing_report_id": REPORT_1_ID},
+        ).status_code == 400
+        # Forged non-numeric lat on POST /reports duplicate_action=same_hazard
+        assert client.post(
+            "/reports",
+            headers=headers,
+            data={
+                "duplicate_action": "same_hazard",
+                "existing_report_id": REPORT_1_ID,
+                "category": "pothole",
+                "lat": "not-a-float",
+                "lng": "78.41",
+            },
+        ).status_code == 400
+        # Forged category on POST /reports duplicate_action=same_hazard
+        assert client.post(
+            "/reports",
+            headers=headers,
+            data={
+                "duplicate_action": "same_hazard",
+                "existing_report_id": REPORT_1_ID,
+                "category": "sinkhole",
+                "lat": "17.48",
+                "lng": "78.41",
+            },
+        ).status_code == 400
+    mock_unused.table.assert_not_called()
+    mock_unused.rpc.assert_not_called()
 
 
 # ==============================================================================
