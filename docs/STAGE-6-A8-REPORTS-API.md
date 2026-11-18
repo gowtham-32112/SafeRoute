@@ -12,15 +12,15 @@ All A8 endpoints run strictly under the authenticated user's Supabase JWT and Po
 
 | Component | Path | Responsibility |
 | :--- | :--- | :--- |
-| Config | [app/config.py](../app/config.py) | `MAX_REQUEST_BODY_BYTES` (default `6 MiB`), `DUPLICATE_RADIUS_METERS` (`30.0`, validated `<= 30.0`), `DUPLICATE_WINDOW_DAYS` (`30`) |
+| Config | [app/config.py](../app/config.py) | `MAX_REQUEST_BODY_BYTES` (default `6 MiB`); immutable constants `APPROVED_DUPLICATE_RADIUS_METERS = 30.0` and `APPROVED_DUPLICATE_WINDOW_DAYS = 30` (read-only compatibility properties on `Settings`) |
 | App & ASGI Middleware | [app/main.py](../app/main.py) | Pure ASGI `RequestSizeLimitMiddleware` (`413` before buffering/parsing), mounts `reports_router`, registers redacted JSON error handlers |
 | Router | [app/routers/reports.py](../app/routers/reports.py) | HTTP parsing, bounded `request.form()` after auth/CSRF, duplicate confirmation validation, SSE streaming response |
 | Report Service | [app/services/reports.py](../app/services/reports.py) | Report creation, orphan-free Storage/DB rollback, signed URL generation, EWKB/GeoJSON/WKT decoding, `reports_in_bounds` RPC |
 | Image Service | [app/services/images.py](../app/services/images.py) | 5 MB image size cap, Pillow JPEG/PNG/WebP validation, EXIF/GPS metadata stripping, Stage 4 Storage path construction |
-| Duplicate Service | [app/services/duplicates.py](../app/services/duplicates.py) | Fixed 30 m `nearby_reports` RPC and authoritative PostGIS revalidation before `verifications` `confirm` vote creation |
+| Duplicate Service | [app/services/duplicates.py](../app/services/duplicates.py) | Immutable 30 m / 30-day `nearby_reports` RPC and authoritative PostGIS revalidation before `verifications` `confirm` vote creation |
 | Realtime Service | [app/services/realtime.py](../app/services/realtime.py) | Option R1 server-side FastAPI SSE bridge wrapping `realtime.AsyncRealtimeClient` with user JWT |
 | Auth Dependencies | [app/deps.py](../app/deps.py) | `AuthenticatedContext` + `get_authenticated_context` reusing Stage 5 session verification and transparent refresh |
-| Automated Tests | [tests/test_stage6_a8_reports.py](../tests/test_stage6_a8_reports.py) | 16 mocked unit and API tests covering every A8 requirement and security boundary |
+| Automated Tests | [tests/test_stage6_a8_reports.py](../tests/test_stage6_a8_reports.py) | 17 mocked unit and API tests covering every A8 requirement and security boundary |
 
 ---
 
@@ -81,9 +81,10 @@ All endpoints require a valid authenticated session (`get_authenticated_context`
     "category": "pothole"
   }
   ```
-- **Fixed 30-Metre Radius Enforcement**:
-  - The duplicate search radius is locked server-side to `Settings.DUPLICATE_RADIUS_METERS` (`30.0` metres) and `Settings.DUPLICATE_WINDOW_DAYS` (`30` days).
-  - **Chosen Behavior for Client Radius Overrides**: If a client submits `radius_m` with any value other than `30.0` (including values `> 30`, `<= 0`, `< 30`, or non-finite values), the API **explicitly rejects** the request with `422 Unprocessable Content` without invoking the SQL RPC. Omitting `radius_m` (recommended) or passing `30` uses the server-side `30.0` configuration.
+- **Immutable 30-Metre / 30-Day Business Rules (Not Deployment-Configurable)**:
+  - The duplicate search radius (`APPROVED_DUPLICATE_RADIUS_METERS = 30.0`) and lookback window (`APPROVED_DUPLICATE_WINDOW_DAYS = 30`) are fixed application business rules defined as `Final` constants in [app/config.py](../app/config.py), not deployment-configurable settings. Environment variables and `Settings` overrides cannot increase or decrease them; `Settings.DUPLICATE_RADIUS_METERS` and `Settings.DUPLICATE_WINDOW_DAYS` are retained strictly as read-only compatibility properties returning those exact constants.
+  - Both `check_nearby_duplicates()` and `confirm_existing_duplicate()` reference the immutable constants directly for PostGIS `nearby_reports` RPC calls, lookback validation, and response metadata (`radius_m = 30.0`, `lookback_days = 30`).
+  - **Chosen Behavior for Client Radius Overrides**: If a client submits `radius_m` with any value other than `30.0` (including values `> 30`, `<= 0`, `< 30`, or non-finite values), the API **explicitly rejects** the request with `422 Unprocessable Content` without invoking the SQL RPC. Omitting `radius_m` (recommended) or passing `30` succeeds and uses `30.0`.
 - **Behavior**: Calls the Stage 4 PostGIS RPC `public.nearby_reports(lat, lng, radius_m=30.0, category)` under the caller's authenticated RLS client. Returns non-fixed reports of the same category within 30 metres created within the last 30 days, ordered by distance ascending.
 - **Success Response (`200 OK`)**:
   ```json
@@ -215,13 +216,13 @@ python -m pytest tests/ -v
 ```
 
 Result on branch `feat/backend-9-reports-api`:
-- **87 passed, 2 skipped** (0 failed).
-- All 16 tests in [tests/test_stage6_a8_reports.py](../tests/test_stage6_a8_reports.py) pass, covering:
+- **88 passed, 2 skipped** (0 failed).
+- All 17 tests in [tests/test_stage6_a8_reports.py](../tests/test_stage6_a8_reports.py) pass, covering:
   - Request-body size limit middleware (`Content-Length`, chunked streaming, spoofed `Content-Length`, and proof that `Request.form()` is never invoked on oversized or unauthenticated requests).
   - JPEG EXIF/GPS metadata stripping, 5 MB image limit (`413`), unsupported format rejection (`415`), corrupt image rejection (`400`), and Stage 4 Storage path formatting.
   - EWKB hex, GeoJSON, and WKT PostGIS point decoding.
   - Valid `POST /reports` submission, forged-field stripping, missing/invalid field validation, and Storage/DB failure rollbacks.
-  - `POST /reports/check-duplicate` fixed 30 m radius enforcement and `422` rejection of client radius override attempts (`> 30 m`, `<= 0`, `< 30 m`).
+  - `POST /reports/check-duplicate` immutable 30 m / 30-day enforcement (immune to env vars and `Settings` overrides of `10 m`, `29 m`, `7 days`, `60 days`) and `422` rejection of client radius override attempts (`> 30 m`, `<= 0`, `< 30 m`).
   - Independent server-side duplicate confirmation revalidation on both `POST /reports/confirm-duplicate` and `POST /reports` (`duplicate_action=same_hazard`): valid match, different category, outside 30 m (including forged `distance_m`), older than 30 days, fixed report, own report (`403`), duplicate vote (`409`), and missing/forged location/category inputs.
   - `GET /reports/{id}` retrieval, missing report `404`, and malformed UUID `400`.
   - `GET /api/reports?bounds=...` validation, optional `category`/`status` filtering, and 500-row cap.

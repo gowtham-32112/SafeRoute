@@ -14,7 +14,12 @@ import uuid
 
 from pydantic import BaseModel, Field, field_validator
 
-from app.config import Settings, settings
+from app.config import (
+    APPROVED_DUPLICATE_RADIUS_METERS,
+    APPROVED_DUPLICATE_WINDOW_DAYS,
+    Settings,
+    settings,
+)
 from app.services.supabase_client import (
     SupabaseConfigError,
     create_authenticated_supabase_client,
@@ -24,8 +29,6 @@ logger = logging.getLogger(__name__)
 
 HazardCategory = Literal["pothole", "road_break", "streetlight", "footpath", "other"]
 VALID_CATEGORIES = ("pothole", "road_break", "streetlight", "footpath", "other")
-APPROVED_DUPLICATE_RADIUS_METERS = 30.0
-APPROVED_DUPLICATE_WINDOW_DAYS = 30
 
 
 class DuplicateServiceError(Exception):
@@ -175,10 +178,10 @@ def check_nearby_duplicates(
     access_token: str,
     app_settings: Optional[Settings] = None,
 ) -> DuplicateCheckResponse:
-    """Query public.nearby_reports via authenticated RLS client at fixed 30m radius."""
+    """Query public.nearby_reports via authenticated RLS client at exact 30m/30d rules."""
     cfg = app_settings or settings
-    radius_m = float(cfg.DUPLICATE_RADIUS_METERS)
-    window_days = int(cfg.DUPLICATE_WINDOW_DAYS)
+    radius_m = APPROVED_DUPLICATE_RADIUS_METERS
+    window_days = APPROVED_DUPLICATE_WINDOW_DAYS
 
     try:
         client = create_authenticated_supabase_client(access_token, cfg)
@@ -284,8 +287,8 @@ def confirm_existing_duplicate(
         )
 
     cfg = app_settings or settings
-    radius_m = float(cfg.DUPLICATE_RADIUS_METERS)
-    window_days = int(cfg.DUPLICATE_WINDOW_DAYS)
+    radius_m = APPROVED_DUPLICATE_RADIUS_METERS
+    window_days = APPROVED_DUPLICATE_WINDOW_DAYS
     cutoff_utc = datetime.now(timezone.utc) - timedelta(days=window_days)
 
     try:

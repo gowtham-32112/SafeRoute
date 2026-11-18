@@ -647,10 +647,215 @@ def test_check_duplicate_rejects_client_radius_override_and_locks_30m():
         )
         assert r_exact.status_code == 200
         assert r_exact.json()["radius_m"] == 30.0
+        assert r_exact.json()["lookback_days"] == 30
         mock_client.rpc.assert_called_once_with(
             "nearby_reports",
             {"lat": 17.48495, "lng": 78.41385, "radius_m": 30.0, "category": "pothole"},
         )
+
+
+def test_duplicate_rules_are_immutable_against_env_and_settings_overrides(monkeypatch):
+    """Approved 30m radius & 30-day lookback cannot be changed by env vars or Settings."""
+    # 1. Default Settings reports exact 30m and 30 days
+    default_cfg = Settings(_env_file=None)
+    assert default_cfg.DUPLICATE_RADIUS_METERS == 30.0
+    assert default_cfg.DUPLICATE_WINDOW_DAYS == 30
+
+    # 2. Environment variables and kwargs cannot alter Settings properties
+    monkeypatch.setenv("DUPLICATE_RADIUS_METERS", "10")
+    monkeypatch.setenv("DUPLICATE_WINDOW_DAYS", "60")
+    env_cfg = Settings(_env_file=None)
+    assert env_cfg.DUPLICATE_RADIUS_METERS == 30.0
+    assert env_cfg.DUPLICATE_WINDOW_DAYS == 30
+
+    kwarg_cfg = Settings(_env_file=None, DUPLICATE_RADIUS_METERS=29.0, DUPLICATE_WINDOW_DAYS=7)
+    assert kwarg_cfg.DUPLICATE_RADIUS_METERS == 30.0
+    assert kwarg_cfg.DUPLICATE_WINDOW_DAYS == 30
+
+    with pytest.raises(AttributeError):
+        env_cfg.DUPLICATE_RADIUS_METERS = 10.0  # type: ignore[misc]
+    with pytest.raises(AttributeError):
+        env_cfg.DUPLICATE_WINDOW_DAYS = 7  # type: ignore[misc]
+
+    # 3. Even a tampered settings object (radius 10/29m, lookback 7/60d) cannot change RPC or rules
+    app.dependency_overrides[get_authenticated_context] = lambda: _auth_ctx(USER_B_ID)
+    client = TestClient(app)
+    headers = _csrf_headers(client)
+
+    for fake_radius, fake_days in ((10.0, 7), (29.0, 60)):
+        tampered_cfg = SimpleNamespace(
+            SUPABASE_URL="https://test-project.supabase.co",
+            SUPABASE_ANON_KEY="sb_publishable_test_dummy",
+            SUPABASE_SERVICE_KEY="",
+            SECRET_KEY="unit-test-secret-key",
+            ENVIRONMENT="development",
+            ACCESS_COOKIE_NAME="sr_access_token",
+            REFRESH_COOKIE_NAME="sr_refresh_token",
+            CSRF_COOKIE_NAME="sr_csrf_token",
+            MAX_REQUEST_BODY_BYTES=6 * 1024 * 1024,
+            DUPLICATE_RADIUS_METERS=fake_radius,
+            DUPLICATE_WINDOW_DAYS=fake_days,
+        )
+        app.dependency_overrides[get_settings] = lambda cfg=tampered_cfg: cfg
+
+        # Duplicate search MUST still pass exact radius_m=30.0 and report 30.0 / 30
+        mock_search = MagicMock()
+        mock_search.rpc.return_value.execute.return_value = SimpleNamespace(data=[])
+        with patch(
+            "app.services.duplicates.create_authenticated_supabase_client",
+            return_value=mock_search,
+        ):
+            r_search = client.post(
+                "/reports/check-duplicate",
+                headers=headers,
+                json={"lat": 17.48495, "lng": 78.41385, "category": "pothole"},
+            )
+        assert r_search.status_code == 200
+        assert r_search.json()["radius_m"] == 30.0
+        assert r_search.json()["lookback_days"] == 30
+        mock_search.rpc.assert_called_once_with(
+            "nearby_reports",
+            {"lat": 17.48495, "lng": 78.41385, "radius_m": 30.0, "category": "pothole"},
+        )
+
+    # 4. With tampered lookback=7d & radius=10m: a 15-day-old report at 29.5m is STILL eligible
+    tampered_tight = SimpleNamespace(
+        SUPABASE_URL="https://test-project.supabase.co",
+        SUPABASE_ANON_KEY="sb_publishable_test_dummy",
+        SUPABASE_SERVICE_KEY="",
+        SECRET_KEY="unit-test-secret-key",
+        ENVIRONMENT="development",
+        ACCESS_COOKIE_NAME="sr_access_token",
+        REFRESH_COOKIE_NAME="sr_refresh_token",
+        CSRF_COOKIE_NAME="sr_csrf_token",
+        MAX_REQUEST_BODY_BYTES=6 * 1024 * 1024,
+        DUPLICATE_RADIUS_METERS=10.0,
+        DUPLICATE_WINDOW_DAYS=7,
+    )
+    app.dependency_overrides[get_settings] = lambda: tampered_tight
+    created_15d = _recent_iso(15)
+    mock_15d, _, ver_15d = _make_duplicate_confirm_mock(
+        days_ago=15,
+        nearby_matches=[
+            {
+                "id": REPORT_1_ID,
+                "reporter_id": USER_A_ID,
+                "report_category": "pothole",
+                "status": "open",
+                "created_at": created_15d,
+                "distance_m": 29.5,
+            }
+        ],
+    )
+    with patch(
+        "app.services.duplicates.create_authenticated_supabase_client",
+        return_value=mock_15d,
+    ):
+        r_confirm_ok = client.post(
+            "/reports/confirm-duplicate",
+            headers=headers,
+            json={
+                "report_id": REPORT_1_ID,
+                "category": "pothole",
+                "lat": 17.48495,
+                "lng": 78.41385,
+            },
+        )
+    assert r_confirm_ok.status_code == 200
+    mock_15d.rpc.assert_called_once_with(
+        "nearby_reports",
+        {"lat": 17.48495, "lng": 78.41385, "radius_m": 30.0, "category": "pothole"},
+    )
+    ver_15d.insert.assert_called_once()
+
+    # 5. With tampered lookback=60d & radius=29m: a 35-day-old report is STILL rejected (400)
+    tampered_loose = SimpleNamespace(
+        SUPABASE_URL="https://test-project.supabase.co",
+        SUPABASE_ANON_KEY="sb_publishable_test_dummy",
+        SUPABASE_SERVICE_KEY="",
+        SECRET_KEY="unit-test-secret-key",
+        ENVIRONMENT="development",
+        ACCESS_COOKIE_NAME="sr_access_token",
+        REFRESH_COOKIE_NAME="sr_refresh_token",
+        CSRF_COOKIE_NAME="sr_csrf_token",
+        MAX_REQUEST_BODY_BYTES=6 * 1024 * 1024,
+        DUPLICATE_RADIUS_METERS=29.0,
+        DUPLICATE_WINDOW_DAYS=60,
+    )
+    app.dependency_overrides[get_settings] = lambda: tampered_loose
+    created_35d = _recent_iso(35)
+    mock_35d, _, ver_35d = _make_duplicate_confirm_mock(
+        days_ago=35,
+        nearby_matches=[
+            {
+                "id": REPORT_1_ID,
+                "reporter_id": USER_A_ID,
+                "report_category": "pothole",
+                "status": "open",
+                "created_at": created_35d,
+                "distance_m": 10.0,
+            }
+        ],
+    )
+    with patch(
+        "app.services.duplicates.create_authenticated_supabase_client",
+        return_value=mock_35d,
+    ):
+        r_35d_json = client.post(
+            "/reports/confirm-duplicate",
+            headers=headers,
+            json={
+                "report_id": REPORT_1_ID,
+                "category": "pothole",
+                "lat": 17.48495,
+                "lng": 78.41385,
+            },
+        )
+        r_35d_form = client.post(
+            "/reports",
+            headers=headers,
+            data={
+                "duplicate_action": "same_hazard",
+                "existing_report_id": REPORT_1_ID,
+                "category": "pothole",
+                "lat": "17.48495",
+                "lng": "78.41385",
+            },
+        )
+    assert r_35d_json.status_code == 400
+    assert r_35d_form.status_code == 400
+    ver_35d.insert.assert_not_called()
+
+    # 6. Distance > 30.0m (e.g. 30.5m) is rejected even under tampered settings
+    mock_30_5m, _, ver_30_5m = _make_duplicate_confirm_mock(
+        days_ago=1,
+        nearby_matches=[
+            {
+                "id": REPORT_1_ID,
+                "reporter_id": USER_A_ID,
+                "report_category": "pothole",
+                "status": "open",
+                "created_at": _recent_iso(1),
+                "distance_m": 30.5,
+            }
+        ],
+    )
+    with patch(
+        "app.services.duplicates.create_authenticated_supabase_client",
+        return_value=mock_30_5m,
+    ):
+        r_over_30 = client.post(
+            "/reports/confirm-duplicate",
+            headers=headers,
+            json={
+                "report_id": REPORT_1_ID,
+                "category": "pothole",
+                "lat": 17.48495,
+                "lng": 78.41385,
+            },
+        )
+    assert r_over_30.status_code == 400
+    ver_30_5m.insert.assert_not_called()
 
 
 def test_same_hazard_creates_confirm_vote_and_blocks_self_and_duplicate_votes():
