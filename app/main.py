@@ -3,9 +3,9 @@
 from contextlib import asynccontextmanager
 import logging
 from pathlib import Path
-from typing import AsyncIterator, Dict
+from typing import AsyncIterator, Dict, Optional, Union
 
-from fastapi import Depends, FastAPI, Request, status
+from fastapi import Depends, FastAPI, Request, Response, status
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -13,14 +13,14 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.config import Settings, settings
-from app.deps import AuthenticationRedirectRequired, get_settings
+from app.deps import AuthenticationRedirectRequired, get_optional_user, get_settings
 from app.routers.auth import router as auth_router
 from app.routers.reports import router as reports_router
-from app.services.auth import AuthError
+from app.services.auth import AuthenticatedUser, AuthError
 from app.services.duplicates import DuplicateServiceError
 from app.services.images import ImageValidationError
 from app.services.reports import ReportServiceError
-from app.services.session import clear_session_cookies
+from app.services.session import clear_session_cookies, issue_csrf_cookie
 from app.services.supabase_client import SupabaseConfigError, clear_supabase_client_cache
 
 logger = logging.getLogger(__name__)
@@ -293,9 +293,41 @@ app.include_router(auth_router)
 app.include_router(reports_router)
 
 
-@app.get("/", summary="Root Welcome Endpoint")
-async def root(app_settings: Settings = Depends(get_settings)) -> Dict[str, str]:
-    """Simple SafeRoute welcome response."""
+def _copy_set_cookie_headers(source: Response, target: Response) -> None:
+    """Propagate any Set-Cookie headers from a dependency/helper response onto target."""
+    for header_name, header_value in source.raw_headers:
+        if header_name.lower() == b"set-cookie":
+            target.raw_headers.append((header_name, header_value))
+
+
+def _prepare_page_csrf(request: Request, app_settings: Settings) -> tuple[str, Response]:
+    """Reuse an active CSRF double-submit cookie or issue a fresh one for auth pages."""
+    existing = request.cookies.get(app_settings.CSRF_COOKIE_NAME, "").strip()
+    carrier = Response()
+    if existing:
+        return existing, carrier
+    token = issue_csrf_cookie(carrier, app_settings)
+    return token, carrier
+
+
+@app.get("/", response_model=None, summary="Public Landing Page / Root Welcome Endpoint")
+async def root(
+    request: Request,
+    response: Response,
+    current_user: Optional[AuthenticatedUser] = Depends(get_optional_user),
+    app_settings: Settings = Depends(get_settings),
+) -> Union[Response, Dict[str, str]]:
+    """Render the public HTML landing page for browsers; preserve JSON for API clients."""
+    accept = request.headers.get("accept", "").lower()
+    if "text/html" in accept:
+        template_resp = templates.TemplateResponse(
+            request=request,
+            name="index.html",
+            context={"current_user": current_user},
+        )
+        _copy_set_cookie_headers(response, template_resp)
+        return template_resp
+
     return {
         "message": (
             f"Welcome to {app_settings.APP_NAME} - "
@@ -305,6 +337,74 @@ async def root(app_settings: Settings = Depends(get_settings)) -> Dict[str, str]
         "version": app_settings.APP_VERSION,
         "docs": "/docs",
     }
+
+
+@app.get("/login", response_model=None, summary="Public Login Page")
+async def login_page(
+    request: Request,
+    response: Response,
+    current_user: Optional[AuthenticatedUser] = Depends(get_optional_user),
+    app_settings: Settings = Depends(get_settings),
+) -> Response:
+    """Render the SafeRoute login page or redirect authenticated users to /map."""
+    if current_user is not None:
+        redirect_resp = RedirectResponse(url="/map", status_code=status.HTTP_303_SEE_OTHER)
+        _copy_set_cookie_headers(response, redirect_resp)
+        return redirect_resp
+
+    csrf_token, csrf_carrier = _prepare_page_csrf(request, app_settings)
+    confirm_email = request.query_params.get("confirm_email") == "1"
+    toasts = (
+        [
+            {
+                "type": "info",
+                "title": "Confirm your email",
+                "message": "Please verify your email address before logging in.",
+            }
+        ]
+        if confirm_email
+        else []
+    )
+    template_resp = templates.TemplateResponse(
+        request=request,
+        name="login.html",
+        context={
+            "current_user": None,
+            "csrf_token": csrf_token,
+            "confirm_email": confirm_email,
+            "toasts": toasts,
+        },
+    )
+    _copy_set_cookie_headers(response, template_resp)
+    _copy_set_cookie_headers(csrf_carrier, template_resp)
+    return template_resp
+
+
+@app.get("/signup", response_model=None, summary="Public Signup Page")
+async def signup_page(
+    request: Request,
+    response: Response,
+    current_user: Optional[AuthenticatedUser] = Depends(get_optional_user),
+    app_settings: Settings = Depends(get_settings),
+) -> Response:
+    """Render the SafeRoute signup page or redirect authenticated users to /map."""
+    if current_user is not None:
+        redirect_resp = RedirectResponse(url="/map", status_code=status.HTTP_303_SEE_OTHER)
+        _copy_set_cookie_headers(response, redirect_resp)
+        return redirect_resp
+
+    csrf_token, csrf_carrier = _prepare_page_csrf(request, app_settings)
+    template_resp = templates.TemplateResponse(
+        request=request,
+        name="signup.html",
+        context={
+            "current_user": None,
+            "csrf_token": csrf_token,
+        },
+    )
+    _copy_set_cookie_headers(response, template_resp)
+    _copy_set_cookie_headers(csrf_carrier, template_resp)
+    return template_resp
 
 
 @app.get("/health", summary="Health Check")
