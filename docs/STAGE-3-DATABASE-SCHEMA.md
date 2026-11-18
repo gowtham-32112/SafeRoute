@@ -1,11 +1,12 @@
 # SafeRoute — Stage 3: Database Schema Documentation (Issue A2)
 
-> - **Document Version**: 1.0.0
+> - **Document Version**: 2.0.0
 > - **Milestone**: Day 1 – Core Loop
 > - **GitHub Issue**: `A2 · Database schema`
 > - **Feature Branch**: `feat/backend-A2-database-schema`
 > - **Target Supabase Project**: `myaadekzqtubygwhjmab` (`https://myaadekzqtubygwhjmab.supabase.co`)
-> - **SQL Execution Status**: **PENDING** (awaiting execution in Supabase SQL Editor by project owner)
+> - **SQL Execution Status**: **EXECUTED & VERIFIED LIVE** (read-only schema/catalog checks passed; live end-to-end Auth signup flow not yet tested)
+> - **Last Verified**: 2026-11-18
 
 ---
 
@@ -75,7 +76,7 @@ Implements the complete Section 7 core relational and PostGIS schema in [supabas
 - **Security Guarantees**:
   - Uses `NEW.id` as `public.profiles.id`.
   - Extracts `full_name` safely from `NEW.raw_user_meta_data` (`full_name` fallback to `name`, fallback to `''`).
-  - **Hardcodes `role = 'user'`** — never inspects user-supplied metadata for role values, making client-side admin privilege escalation impossible.
+  - **Hardcodes `role = 'user'`** — never inspects user-supplied metadata for role values, preventing client-side admin privilege escalation.
   - Uses `ON CONFLICT (id) DO NOTHING` to prevent duplicate-key errors.
   - Executes `REVOKE ALL ON FUNCTION public.handle_new_user() FROM PUBLIC;` to prevent direct unprivileged invocation.
 
@@ -83,27 +84,21 @@ Implements the complete Section 7 core relational and PostGIS schema in [supabas
 
 ## 5. Realtime Configuration
 
-- An idempotent `DO $$ ... END $$;` block checks `pg_publication` and `pg_publication_tables` and runs:
+- An idempotent `DO $$ ... END $$;` block checks `pg_publication` and `pg_publication_tables` and adds `public.hazard_reports` to `supabase_realtime`:
   ```sql
   ALTER PUBLICATION supabase_realtime ADD TABLE public.hazard_reports;
   ```
-- Safe to rerun without error; adds **only** `public.hazard_reports`.
+- Safe to rerun without error. This stage adds `public.hazard_reports` to `supabase_realtime` and does not enroll any other SafeRoute tables.
 
 ---
 
-## 6. Execution Instructions (Supabase SQL Editor)
+## 6. Execution Reference (Supabase SQL Editor)
 
-Because privileged database credentials (`service_role` / DB password) are intentionally kept private and unavailable to the local publishable-key environment, execute `supabase/schema.sql` directly in the Supabase Dashboard:
-
-1. Open the Supabase SQL Editor for project **`myaadekzqtubygwhjmab`**:
-   `https://supabase.com/dashboard/project/myaadekzqtubygwhjmab/sql/new`
-2. Paste the entire contents of `supabase/schema.sql` and click **Run**.
-3. Confirm it finishes with `Success. No rows returned`.
-4. Run the read-only verification queries in Section 7 below and record the results.
+`supabase/schema.sql` was executed in the Supabase SQL Editor for project **`myaadekzqtubygwhjmab`** (`https://supabase.com/dashboard/project/myaadekzqtubygwhjmab/sql/new`) and verified with read-only catalog queries.
 
 ---
 
-## 7. Live Verification SQL Queries (Run After Executing `schema.sql`)
+## 7. Read-Only Verification SQL Queries
 
 ```sql
 -- 1. Verify all 7 tables exist in public
@@ -182,19 +177,40 @@ FROM pg_proc
 WHERE pronamespace = 'public'::regnamespace
   AND proname = 'handle_new_user';
 
--- 7. Verify Realtime publication membership (must show public.hazard_reports ONLY)
+-- 7. Verify public.hazard_reports is enrolled in supabase_realtime
 SELECT pubname, schemaname, tablename
 FROM pg_publication_tables
-WHERE pubname = 'supabase_realtime';
+WHERE pubname = 'supabase_realtime'
+  AND schemaname = 'public'
+  AND tablename = 'hazard_reports';
 ```
 
 ---
 
-## 8. Current Verification Status Matrix
+## 8. Actual Verification Results (Distinguished by Verification Method)
 
-| Verification Layer | Status | Details |
+### A. Verified Live in Supabase (`myaadekzqtubygwhjmab`, Read-Only Catalog Queries)
+
+| Check | Status | Confirmed Live Evidence |
 |---|:---:|---|
-| **Static SQL Review** | **PASS** | Verified dependency order, syntax, constraints, indexes, trigger security, and Realtime idempotency. |
-| **Local Automated Tests** | **PASS** | `pytest tests/ -v` (Stage 1 health tests + Stage 3 schema validation tests). |
-| **Supabase SQL Execution** | **PENDING** | Awaiting project owner execution of `supabase/schema.sql` in Supabase SQL Editor (`myaadekzqtubygwhjmab`). |
-| **Live Supabase DB Verification** | **PENDING** | Awaiting execution of Section 7 read-only queries and live signup trigger check after SQL run. |
+| **Schema Execution (`supabase/schema.sql`)** | **PASS (Live)** | Executed cleanly in Supabase SQL Editor. |
+| **Seven Required Tables** | **PASS (Live)** | All 7 tables present in `public`: `profiles`, `hazard_reports`, `report_images`, `verifications`, `comments`, `escalations`, `status_history`. |
+| **Spatial Column Type** | **PASS (Live)** | `hazard_reports.location` verified as exact type `geography(Point,4326)`. |
+| **Indexes** | **PASS (Live)** | Confirmed `idx_hazard_reports_location_gist`, `idx_hazard_reports_status_category_created`, `idx_hazard_reports_duplicate_of`, `idx_hazard_reports_reporter_id`, and all table primary keys and supporting indexes. |
+| **Realtime Publication Membership** | **PASS (Live)** | Confirmed `public.hazard_reports` is enrolled in publication `supabase_realtime`. |
+| **Signup Trigger** | **PASS (Live)** | Confirmed `on_auth_user_created` exists on `auth.users` (`AFTER INSERT`). |
+| **Signup Function Definition** | **PASS (Live)** | Confirmed `public.handle_new_user()` is `SECURITY DEFINER`, inserts the new user's profile, hardcodes role `'user'`, and uses `ON CONFLICT (id) DO NOTHING`. |
+
+### B. Verified Through Static Code Review & Local Automated Tests
+
+| Check | Status | Verification Evidence |
+|---|:---:|---|
+| **Static SQL Schema Suite (`tests/test_schema_sql.py`)** | **PASS (Static)** | Verified table dependency order, all 21 `hazard_reports` columns, CHECK/PK/FK definitions, trigger security invariants, Realtime idempotency, and zero Stage 4 objects. |
+| **Stage 1 FastAPI Regression Suite (`tests/test_health.py`)** | **PASS (Local)** | Verified `GET /` and `GET /health` continue passing. |
+
+### C. Not Yet Tested Through Live Runtime / Signup Flow
+
+| Check | Status | Notes |
+|---|:---:|---|
+| **End-to-End Auth Signup Flow** | **NOT YET TESTED** | An actual Supabase Auth user registration (`auth.users` insert) firing `on_auth_user_created` to create a `public.profiles` row (and confirming metadata cannot set `role = 'admin'`) has not yet been executed. Planned to be validated end-to-end when Stage 5 Auth is exercised or via a controlled test signup. |
+| **Runtime Negative Constraint Rejection Probes** | **NOT YET TESTED** | Constraint definitions are verified in `schema.sql`; live invalid-row insert rejection probes were not executed so no test rows were written to the database. |
