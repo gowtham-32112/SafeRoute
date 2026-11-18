@@ -10,17 +10,134 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.config import Settings, settings
 from app.deps import AuthenticationRedirectRequired, get_settings
 from app.routers.auth import router as auth_router
+from app.routers.reports import router as reports_router
 from app.services.auth import AuthError
+from app.services.duplicates import DuplicateServiceError
+from app.services.images import ImageValidationError
+from app.services.reports import ReportServiceError
 from app.services.session import clear_session_cookies
 from app.services.supabase_client import SupabaseConfigError, clear_supabase_client_cache
 
 logger = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent
+
+
+class RequestBodyTooLargeError(Exception):
+    """Raised when an incoming HTTP request exceeds MAX_REQUEST_BODY_BYTES."""
+
+    def __init__(
+        self,
+        user_message: str = "Request body exceeds the maximum allowed size.",
+    ) -> None:
+        super().__init__(user_message)
+        self.user_message = user_message
+
+
+class RequestSizeLimitMiddleware:
+    """Pure ASGI middleware enforcing a strict request body byte limit.
+
+    Protects against unbounded request buffering and oversized multipart uploads
+    before routing, authentication, CSRF parsing, or multipart parsing run.
+    Handles both Content-Length headers and chunked/streaming bodies.
+    """
+
+    def __init__(self, app: ASGIApp, fastapi_app: FastAPI) -> None:
+        self.app = app
+        self.fastapi_app = fastapi_app
+
+    def _get_max_bytes(self) -> int:
+        provider = self.fastapi_app.dependency_overrides.get(get_settings, get_settings)
+        return int(provider().MAX_REQUEST_BODY_BYTES)
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        max_bytes = self._get_max_bytes()
+
+        # 1. Fast-path Content-Length check before touching receive() or multipart parsing
+        for raw_name, raw_value in scope.get("headers", ()):
+            if raw_name.lower() == b"content-length":
+                text_value = raw_value.decode("latin-1").strip()
+                if not text_value:
+                    continue
+                try:
+                    declared_len = int(text_value)
+                except ValueError:
+                    resp = JSONResponse(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        content={"detail": "Invalid Content-Length header."},
+                    )
+                    await resp(scope, receive, send)
+                    return
+                if declared_len < 0:
+                    resp = JSONResponse(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        content={"detail": "Invalid Content-Length header."},
+                    )
+                    await resp(scope, receive, send)
+                    return
+                if declared_len > max_bytes:
+                    resp = JSONResponse(
+                        status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                        content={"detail": "Request body exceeds the maximum allowed size."},
+                    )
+                    await resp(scope, receive, send)
+                    return
+                break
+
+        # 2. Streaming / chunked body byte counter (blocks missing or spoofed Content-Length)
+        bytes_received = 0
+        limit_exceeded = False
+        response_started = False
+        suppress_swallowed_response = False
+
+        async def bounded_receive() -> Message:
+            nonlocal bytes_received, limit_exceeded
+            message = await receive()
+            if message.get("type") == "http.request":
+                body = message.get("body", b"")
+                bytes_received += len(body)
+                if bytes_received > max_bytes:
+                    limit_exceeded = True
+                    raise RequestBodyTooLargeError()
+            return message
+
+        async def tracked_send(message: Message) -> None:
+            nonlocal response_started, suppress_swallowed_response
+            if message.get("type") == "http.response.start":
+                if limit_exceeded and message.get("status") != status.HTTP_413_CONTENT_TOO_LARGE:
+                    suppress_swallowed_response = True
+                    return
+                response_started = True
+            elif suppress_swallowed_response:
+                return
+            await send(message)
+
+        try:
+            await self.app(scope, bounded_receive, tracked_send)
+        except RequestBodyTooLargeError as exc:
+            if not response_started:
+                resp = JSONResponse(
+                    status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                    content={"detail": exc.user_message},
+                )
+                await resp(scope, receive, send)
+            return
+
+        if limit_exceeded and not response_started:
+            resp = JSONResponse(
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                content={"detail": "Request body exceeds the maximum allowed size."},
+            )
+            await resp(scope, receive, send)
 
 
 @asynccontextmanager
@@ -36,6 +153,7 @@ app = FastAPI(
     description="AI-powered Community Road-Hazard Awareness Platform",
     lifespan=lifespan,
 )
+app.add_middleware(RequestSizeLimitMiddleware, fastapi_app=app)
 
 # Mount static files directory
 static_dir = BASE_DIR / "static"
@@ -75,6 +193,54 @@ async def handle_auth_redirect(
 @app.exception_handler(AuthError)
 async def handle_auth_error(_request: Request, exc: AuthError) -> JSONResponse:
     """Return safe, redacted JSON errors for authentication/authorization failures."""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.user_message},
+    )
+
+
+@app.exception_handler(RequestBodyTooLargeError)
+async def handle_request_body_too_large(
+    _request: Request,
+    exc: RequestBodyTooLargeError,
+) -> JSONResponse:
+    """Return HTTP 413 when a streamed/chunked request body exceeds the configured cap."""
+    return JSONResponse(
+        status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+        content={"detail": exc.user_message},
+    )
+
+
+@app.exception_handler(ImageValidationError)
+async def handle_image_validation_error(
+    _request: Request,
+    exc: ImageValidationError,
+) -> JSONResponse:
+    """Return clean JSON errors for image size/type/integrity violations."""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.user_message},
+    )
+
+
+@app.exception_handler(DuplicateServiceError)
+async def handle_duplicate_service_error(
+    _request: Request,
+    exc: DuplicateServiceError,
+) -> JSONResponse:
+    """Return clean JSON errors for duplicate-check and confirm actions."""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.user_message},
+    )
+
+
+@app.exception_handler(ReportServiceError)
+async def handle_report_service_error(
+    _request: Request,
+    exc: ReportServiceError,
+) -> JSONResponse:
+    """Return clean JSON errors for report creation, retrieval, and bounds queries."""
     return JSONResponse(
         status_code=exc.status_code,
         content={"detail": exc.user_message},
@@ -124,6 +290,7 @@ async def handle_unexpected_exception(_request: Request, exc: Exception) -> JSON
 # ------------------------------------------------------------------------------
 
 app.include_router(auth_router)
+app.include_router(reports_router)
 
 
 @app.get("/", summary="Root Welcome Endpoint")

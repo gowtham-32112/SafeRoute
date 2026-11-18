@@ -1,9 +1,15 @@
 """SafeRoute application configuration settings."""
 
-from typing import Literal, Optional
+from typing import Final, Literal, Optional
 
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Authoritative, immutable SafeRoute duplicate business rules (SPEC.md).
+# Not deployment-configurable: environment variables and Settings overrides
+# cannot change these values.
+APPROVED_DUPLICATE_RADIUS_METERS: Final[float] = 30.0
+APPROVED_DUPLICATE_WINDOW_DAYS: Final[int] = 30
 
 DEFAULT_DEV_SECRET_KEY = "dev-secret-key-change-in-production"
 MIN_PRODUCTION_SECRET_KEY_LENGTH = 32
@@ -57,8 +63,10 @@ class Settings(BaseSettings):
     FIXED_VOTE_THRESHOLD: int = 2
     ESCALATION_CONFIRM_THRESHOLD: int = 5
     ESCALATION_SEVERITY_THRESHOLD: int = 70
-    DUPLICATE_RADIUS_METERS: float = 30.0
     ROUTE_HAZARD_BUFFER_METERS: float = 25.0
+
+    # Request Resource Limits (5 MB max image + 1 MB multipart/form overhead)
+    MAX_REQUEST_BODY_BYTES: int = 6 * 1024 * 1024
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -81,6 +89,14 @@ class Settings(BaseSettings):
         if not value:
             return "development"
         return str(value).strip().lower()
+
+    @field_validator("MAX_REQUEST_BODY_BYTES")
+    @classmethod
+    def _validate_max_request_body_bytes(cls, value: int) -> int:
+        """Ensure MAX_REQUEST_BODY_BYTES is a positive byte limit."""
+        if value < 1024:
+            raise ValueError("MAX_REQUEST_BODY_BYTES must be at least 1024 bytes.")
+        return value
 
     @model_validator(mode="after")
     def _validate_production_secret_key(self) -> "Settings":
@@ -131,6 +147,16 @@ class Settings(BaseSettings):
     def has_service_key(self) -> bool:
         """Return True if SUPABASE_SERVICE_KEY is configured."""
         return bool(self.SUPABASE_SERVICE_KEY.strip())
+
+    @property
+    def DUPLICATE_RADIUS_METERS(self) -> float:
+        """Read-only compatibility accessor for the immutable 30-metre duplicate rule."""
+        return APPROVED_DUPLICATE_RADIUS_METERS
+
+    @property
+    def DUPLICATE_WINDOW_DAYS(self) -> int:
+        """Read-only compatibility accessor for the immutable 30-day duplicate rule."""
+        return APPROVED_DUPLICATE_WINDOW_DAYS
 
 
 # Global settings singleton
