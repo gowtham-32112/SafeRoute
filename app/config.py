@@ -1,7 +1,19 @@
 """SafeRoute application configuration settings."""
 
-from typing import Optional
+from typing import Literal, Optional
+
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+DEFAULT_DEV_SECRET_KEY = "dev-secret-key-change-in-production"
+MIN_PRODUCTION_SECRET_KEY_LENGTH = 32
+_WEAK_SECRET_MARKERS = (
+    "dev-secret",
+    "change-in-production",
+    "changeme",
+    "placeholder",
+    "your-random",
+)
 
 
 class Settings(BaseSettings):
@@ -15,8 +27,18 @@ class Settings(BaseSettings):
     # Vision AI Configuration
     VISION_API_KEY: str = ""
 
-    # Application Security
-    SECRET_KEY: str = "dev-secret-key-change-in-production"
+    # Application Security & Environment
+    SECRET_KEY: str = DEFAULT_DEV_SECRET_KEY
+    ENVIRONMENT: str = "development"
+
+    # Session & Cookie Security
+    COOKIE_SECURE: Optional[bool] = None
+    COOKIE_SAMESITE: Literal["lax", "strict", "none"] = "lax"
+    ACCESS_COOKIE_NAME: str = "sr_access_token"
+    REFRESH_COOKIE_NAME: str = "sr_refresh_token"
+    CSRF_COOKIE_NAME: str = "sr_csrf_token"
+    ACCESS_TOKEN_MAX_AGE_SECONDS: int = 3600
+    REFRESH_TOKEN_MAX_AGE_SECONDS: int = 604800
 
     # Application Metadata
     APP_NAME: str = "SafeRoute"
@@ -41,8 +63,74 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
-        extra="ignore"
+        extra="ignore",
     )
+
+    @field_validator("SUPABASE_URL", mode="before")
+    @classmethod
+    def _normalize_supabase_url(cls, value: Optional[str]) -> str:
+        """Strip whitespace and trailing slashes from SUPABASE_URL."""
+        if not value:
+            return ""
+        return str(value).strip().rstrip("/")
+
+    @field_validator("ENVIRONMENT", mode="before")
+    @classmethod
+    def _normalize_environment(cls, value: Optional[str]) -> str:
+        """Normalize deployment environment name."""
+        if not value:
+            return "development"
+        return str(value).strip().lower()
+
+    @model_validator(mode="after")
+    def _validate_production_secret_key(self) -> "Settings":
+        """Reject default or weak SECRET_KEY values in staging/production."""
+        if not self.is_production:
+            return self
+
+        secret = self.SECRET_KEY.strip()
+        lowered = secret.lower()
+        is_weak = (
+            not secret
+            or secret == DEFAULT_DEV_SECRET_KEY
+            or len(secret) < MIN_PRODUCTION_SECRET_KEY_LENGTH
+            or any(marker in lowered for marker in _WEAK_SECRET_MARKERS)
+        )
+        if is_weak:
+            raise ValueError(
+                "A strong non-default SECRET_KEY (minimum 32 characters) "
+                "is required when ENVIRONMENT is production or staging."
+            )
+        return self
+
+    @property
+    def is_production(self) -> bool:
+        """Return True when running in production or staging."""
+        return self.ENVIRONMENT in ("production", "staging")
+
+    @property
+    def use_secure_cookies(self) -> bool:
+        """Use Secure cookies automatically in HTTPS environments unless overridden."""
+        if self.COOKIE_SECURE is not None:
+            return self.COOKIE_SECURE
+        return self.is_production
+
+    @property
+    def is_supabase_configured(self) -> bool:
+        """Return True if SUPABASE_URL and SUPABASE_ANON_KEY are minimally valid."""
+        url = self.SUPABASE_URL
+        key = self.SUPABASE_ANON_KEY.strip()
+        return (
+            bool(url)
+            and url.startswith(("https://", "http://"))
+            and "placeholder" not in url.lower()
+            and bool(key)
+        )
+
+    @property
+    def has_service_key(self) -> bool:
+        """Return True if SUPABASE_SERVICE_KEY is configured."""
+        return bool(self.SUPABASE_SERVICE_KEY.strip())
 
 
 # Global settings singleton
