@@ -103,8 +103,15 @@ Verification confirms that **no SafeRoute application objects exist in the `publ
    - User executed read-only SQL Editor verification confirming zero SafeRoute application tables exist in `public`.
    - **Status**: **PASS**
 2. **Application SQL Functions**:
-   - Automated live PostgREST probes confirmed all 3 planned RPCs (`reports_in_bounds`, `nearby_reports`, `hazards_near_route`) return `404 PGRST202`.
-   - **Status**: **PASS**
+   - `tests/verify_supabase.py` intentionally does **not** issue HTTP `POST /rest/v1/rpc/<fn>` calls to probe function existence, because executing an existing RPC could mutate database state.
+   - To verify absence of planned application RPCs without executing functions, run the following read-only catalog query in the Supabase SQL Editor:
+     ```sql
+     SELECT routine_name
+     FROM information_schema.routines
+     WHERE routine_schema = 'public'
+       AND routine_name IN ('reports_in_bounds', 'nearby_reports', 'hazards_near_route');
+     ```
+   - **Status**: **NOT VERIFIED** by automated script (strictly read-only policy; verify via read-only SQL Editor catalog query above).
 3. **Application Triggers**:
    - User executed read-only SQL Editor check confirming no SafeRoute application triggers exist in `public`.
    - **Status**: **PASS**
@@ -140,4 +147,4 @@ Verification confirms that **no SafeRoute application objects exist in the `publ
 
 ## 9. Automated Script Limitations & Verification Log
 
-The read-only helper script `tests/verify_supabase.py` uses only the local publishable key (`sb_publishable_...`) and intentionally reports privileged catalog/dashboard items (`pg_extension`, `storage.buckets` metadata, `pg_trigger`, `pg_policies`, and Auth Redirect URLs) as `NOT VERIFIED` by the script. Those items were verified directly by the project owner in the Supabase Dashboard and SQL Editor as documented in Sections 3–6 above.
+The strictly read-only helper script `tests/verify_supabase.py` uses only HTTP `GET` requests with the local publishable key (`sb_publishable_...`). It never issues `POST` requests to `/rest/v1/rpc/*` (to guarantee zero risk of executing mutating database functions) and intentionally reports catalog/dashboard items (`pg_extension`, `storage.buckets` metadata, `information_schema.routines`, `pg_trigger`, `pg_policies`, and Auth Redirect URLs) as `NOT VERIFIED` by the script. Privileged items verified directly by the project owner in the Supabase Dashboard and SQL Editor are documented in Sections 3–6 above.

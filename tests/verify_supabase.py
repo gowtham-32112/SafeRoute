@@ -34,12 +34,6 @@ PLANNED_TABLES = [
     "status_history",
 ]
 
-PLANNED_RPCS = [
-    "reports_in_bounds",
-    "nearby_reports",
-    "hazards_near_route",
-]
-
 
 def _safe_error_label(exc: Exception) -> str:
     """Return a credential-safe exception class label without raw request details."""
@@ -178,27 +172,15 @@ def run_verification() -> Dict[str, str]:
             print(f"[FAIL] Unauthorized application tables detected: {existing_tables}")
             results["no_app_tables"] = "FAIL"
 
-        # Check planned RPC functions absence
-        existing_rpcs = []
-        for fn in PLANNED_RPCS:
-            resp = httpx.post(
-                f"{url}/rest/v1/rpc/{fn}",
-                headers={**anon_headers, "Content-Type": "application/json"},
-                json={},
-                timeout=10.0,
-            )
-            if not (resp.status_code == 404 and "PGRST202" in resp.text):
-                existing_rpcs.append(fn)
-
-        if not existing_rpcs:
-            print(
-                f"[PASS] None of the {len(PLANNED_RPCS)} planned SQL RPC functions "
-                f"exist in public schema (PGRST202 confirmed)."
-            )
-            results["no_app_functions"] = "PASS"
-        else:
-            print(f"[FAIL] Unauthorized SQL functions detected: {existing_rpcs}")
-            results["no_app_functions"] = "FAIL"
+        # Do NOT execute /rest/v1/rpc/<fn> via POST to probe function existence,
+        # because invoking an existing RPC could mutate state. Catalog inspection
+        # of public routines requires read-only SQL Editor access.
+        print(
+            "[NOT VERIFIED] Planned SQL RPC functions (information_schema.routines) are "
+            "not probed via HTTP execution to guarantee strictly read-only behavior "
+            "(verify via read-only SQL Editor query; see docs/STAGE-2-SUPABASE-SETUP.md)."
+        )
+        results["no_app_functions"] = "NOT VERIFIED"
     except Exception as exc:
         print(f"[FAIL] PostgREST verification error ({_safe_error_label(exc)})")
         results["postgres_connectivity"] = "FAIL"
