@@ -14,7 +14,11 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.config import Settings, settings
 from app.deps import AuthenticationRedirectRequired, get_settings
 from app.routers.auth import router as auth_router
+from app.routers.reports import router as reports_router
 from app.services.auth import AuthError
+from app.services.duplicates import DuplicateServiceError
+from app.services.images import ImageValidationError
+from app.services.reports import ReportServiceError
 from app.services.session import clear_session_cookies
 from app.services.supabase_client import SupabaseConfigError, clear_supabase_client_cache
 
@@ -81,6 +85,42 @@ async def handle_auth_error(_request: Request, exc: AuthError) -> JSONResponse:
     )
 
 
+@app.exception_handler(ImageValidationError)
+async def handle_image_validation_error(
+    _request: Request,
+    exc: ImageValidationError,
+) -> JSONResponse:
+    """Return clean JSON errors for image size/type/integrity violations."""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.user_message},
+    )
+
+
+@app.exception_handler(DuplicateServiceError)
+async def handle_duplicate_service_error(
+    _request: Request,
+    exc: DuplicateServiceError,
+) -> JSONResponse:
+    """Return clean JSON errors for duplicate-check and confirm actions."""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.user_message},
+    )
+
+
+@app.exception_handler(ReportServiceError)
+async def handle_report_service_error(
+    _request: Request,
+    exc: ReportServiceError,
+) -> JSONResponse:
+    """Return clean JSON errors for report creation, retrieval, and bounds queries."""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.user_message},
+    )
+
+
 @app.exception_handler(SupabaseConfigError)
 async def handle_supabase_config_error(
     _request: Request,
@@ -124,6 +164,7 @@ async def handle_unexpected_exception(_request: Request, exc: Exception) -> JSON
 # ------------------------------------------------------------------------------
 
 app.include_router(auth_router)
+app.include_router(reports_router)
 
 
 @app.get("/", summary="Root Welcome Endpoint")

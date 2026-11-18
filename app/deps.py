@@ -1,5 +1,6 @@
 """FastAPI dependency injection utilities for configuration, auth, and RBAC."""
 
+from dataclasses import dataclass
 from typing import Optional
 
 from fastapi import Depends, HTTPException, Request, Response, status
@@ -62,12 +63,20 @@ def _wants_html_redirect(request: Request) -> bool:
     return "text/html" in accept or request.headers.get("hx-request", "").lower() == "true"
 
 
+@dataclass(frozen=True)
+class AuthenticatedContext:
+    """Validated user identity paired with the active per-request RLS JWT."""
+
+    user: AuthenticatedUser
+    access_token: str
+
+
 def _resolve_user_from_request(
     request: Request,
     response: Response,
     app_settings: Settings,
-) -> tuple[Optional[AuthenticatedUser], bool]:
-    """Validate request credentials and return (user_or_none, had_stale_cookie).
+) -> tuple[Optional[AuthenticatedUser], Optional[str], bool]:
+    """Validate request credentials and return (user, active_token, had_stale_cookie).
 
     Transparently refreshes an expired cookie session when a valid refresh
     cookie is available and rotates cookies on the response.
@@ -75,19 +84,19 @@ def _resolve_user_from_request(
     access_token, refresh_token, via_cookie = extract_session_tokens(request, app_settings)
 
     if not access_token and not refresh_token:
-        return None, False
+        return None, None, False
 
     if access_token:
         try:
             user = get_authenticated_user_from_token(access_token, app_settings)
-            return user, False
+            return user, access_token, False
         except ProfileNotFoundError:
             raise
         except SessionExpiredError:
             if not (via_cookie and refresh_token):
-                return None, via_cookie
+                return None, None, via_cookie
         except AuthError:
-            return None, via_cookie
+            return None, None, via_cookie
 
     # Attempt cookie-based refresh when access token is missing or expired
     if via_cookie and refresh_token:
@@ -101,13 +110,13 @@ def _resolve_user_from_request(
                     app_settings=app_settings,
                     expires_in=refreshed.expires_in,
                 )
-            return refreshed.user, False
+            return refreshed.user, refreshed.access_token, False
         except ProfileNotFoundError:
             raise
         except AuthError:
-            return None, True
+            return None, None, True
 
-    return None, via_cookie
+    return None, None, via_cookie
 
 
 async def get_optional_user(
@@ -117,7 +126,7 @@ async def get_optional_user(
 ) -> Optional[AuthenticatedUser]:
     """Return the authenticated user if valid credentials exist, else None."""
     try:
-        user, stale_cookie = _resolve_user_from_request(request, response, app_settings)
+        user, _token, stale_cookie = _resolve_user_from_request(request, response, app_settings)
     except ProfileNotFoundError:
         return None
 
@@ -126,21 +135,22 @@ async def get_optional_user(
     return user
 
 
-async def get_current_user(
+async def get_authenticated_context(
     request: Request,
     response: Response,
     app_settings: Settings = Depends(get_settings),
-) -> AuthenticatedUser:
-    """Require a valid Supabase session and return the trusted AuthenticatedUser.
+) -> AuthenticatedContext:
+    """Require a valid Supabase session and return both user identity and RLS token.
 
-    - Browser / HTMX requests without valid authentication redirect to /login.
-    - API / JSON / Bearer-token requests receive HTTP 401 Unauthorized.
-    - Authenticated users missing a valid public.profiles record receive HTTP 403.
+    The active access token is used strictly server-side to bind per-request
+    RLS-enforced Supabase clients and is never exposed to browser JavaScript.
     """
-    user, stale_cookie = _resolve_user_from_request(request, response, app_settings)
+    user, active_token, stale_cookie = _resolve_user_from_request(
+        request, response, app_settings
+    )
 
-    if user is not None:
-        return user
+    if user is not None and active_token:
+        return AuthenticatedContext(user=user, access_token=active_token)
 
     if stale_cookie:
         clear_session_cookies(response, app_settings)
@@ -153,6 +163,18 @@ async def get_current_user(
         detail="Authentication required.",
         headers={"WWW-Authenticate": "Bearer"},
     )
+
+
+async def get_current_user(
+    ctx: AuthenticatedContext = Depends(get_authenticated_context),
+) -> AuthenticatedUser:
+    """Require a valid Supabase session and return the trusted AuthenticatedUser.
+
+    - Browser / HTMX requests without valid authentication redirect to /login.
+    - API / JSON / Bearer-token requests receive HTTP 401 Unauthorized.
+    - Authenticated users missing a valid public.profiles record receive HTTP 403.
+    """
+    return ctx.user
 
 
 async def require_admin(
@@ -171,7 +193,10 @@ async def require_admin(
 
 
 async def _extract_form_csrf_token(request: Request) -> Optional[str]:
-    """Read csrf_token from URL-encoded or multipart form payloads if present."""
+    """Read csrf_token from URL-encoded or multipart form payloads if needed."""
+    # Skip parsing form/multipart bodies when the caller already sent X-CSRF-Token.
+    if request.headers.get("x-csrf-token"):
+        return None
     content_type = request.headers.get("content-type", "").lower()
     if (
         "application/x-www-form-urlencoded" in content_type
