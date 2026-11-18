@@ -1,0 +1,155 @@
+/* SafeRoute Design System — Spec Section 5 Tokens & Base Styles
+ * Light theme only. Desktop-first, responsive down to 375px.
+ * Contrast rule: Never use mint (#0FFCBE) as text on white or light backgrounds.
+ */
+
+:root {
+  color-scheme: only light;
+
+  /* Brand Palette */
+  --sr-primary: #106EBE;
+  --sr-primary-dark: #0B4F8A;
+  --sr-primary-soft: #E6F1FA;
+  --sr-accent: #0FFCBE;
+  --sr-ink: #0F2A43;
+  --sr-muted: #5B6B7C;
+  --sr-surface: #FFFFFF;
+  --sr-canvas: #F6FAFD;
+  --sr-border: #D9E4EE;
+
+  /* Severity Palette (separate from brand colours; always paired with text labels) */
+  --sr-severity-low: #2E9E5B;
+  --sr-severity-low-bg: #EBF7F0;
+  --sr-severity-low-text: #1B6B3B;
+
+  --sr-severity-medium: #F5A524;
+  --sr-severity-medium-bg: #FEF6E7;
+  --sr-severity-medium-text: #8A5300;
+
+  --sr-severity-high: #D92D20;
+  --sr-severity-high-bg: #FDECEB;
+  --sr-severity-high-text: #991B1B;
+
+  /* Typography & Shape Tokens */
+  --sr-font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, -apple-system,
+    BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --sr-radius-card: 12px;
+  --sr-radius-chip: 999px;
+  --sr-shadow-card: 0 1px 3px rgba(15, 42, 67, 0.06), 0 4px 12px rgba(15, 42, 67, 0.04);
+  --sr-shadow-elevated: 0 8px 24px rgba(15, 42, 67, 0.12);
+}
+
+html {
+  font-family: var(--sr-font-sans);
+  background-color: var(--sr-canvas);
+  color: var(--sr-ink);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  min-height: 100vh;
+  background-color: var(--sr-canvas);
+  color: var(--sr-ink);
+  overflow-x: clip;
+}
+
+/* Alpine.js cloak — prevent unstyled flashes before initialization */
+[x-cloak] {
+  display: none !important;
+}
+
+/* Visible Keyboard Focus (WCAG 2.1 AA — unmistakable on both light & dark blue surfaces) */
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 3px solid var(--sr-accent);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 5px rgba(11, 79, 138, 0.45);
+}
+
+/* Skip to main content link for keyboard and screen-reader users */
+.sr-skip-link {
+  position: absolute;
+  top: -100%;
+  left: 1rem;
+  z-index: 100;
+  padding: 0.625rem 1rem;
+  border-radius: 0.5rem;
+  background-color: var(--sr-primary-dark);
+  color: #FFFFFF;
+  font-weight: 700;
+  font-size: 0.875rem;
+  text-decoration: none;
+  box-shadow: var(--sr-shadow-elevated);
+}
+
+.sr-skip-link:focus {
+  top: 0.75rem;
+}
+
+/* Reusable semantic component classes */
+.sr-card {
+  background-color: var(--sr-surface);
+  border: 1px solid var(--sr-border);
+  border-radius: var(--sr-radius-card);
+  box-shadow: var(--sr-shadow-card);
+}
+
+.sr-chip {
+  border-radius: var(--sr-radius-chip);
+}
+
+/* Severity badge contrast-safe helpers (dot uses exact spec hex; text uses AA+ dark shade) */
+.sr-severity-low {
+  background-color: var(--sr-severity-low-bg);
+  color: var(--sr-severity-low-text);
+  border-color: rgba(46, 158, 91, 0.35);
+}
+
+.sr-severity-low-dot {
+  background-color: var(--sr-severity-low);
+}
+
+.sr-severity-medium {
+  background-color: var(--sr-severity-medium-bg);
+  color: var(--sr-severity-medium-text);
+  border-color: rgba(245, 165, 36, 0.45);
+}
+
+.sr-severity-medium-dot {
+  background-color: var(--sr-severity-medium);
+}
+
+.sr-severity-high {
+  background-color: var(--sr-severity-high-bg);
+  color: var(--sr-severity-high-text);
+  border-color: rgba(217, 45, 32, 0.35);
+}
+
+.sr-severity-high-dot {
+  background-color: var(--sr-severity-high);
+}
+
+/* HTMX loading indicators */
+.htmx-indicator {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 150ms ease-in;
+}
+
+.htmx-request .htmx-indicator,
+.htmx-request.htmx-indicator {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Respect user reduced-motion preferences */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
