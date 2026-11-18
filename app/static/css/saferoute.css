@@ -224,6 +224,134 @@ body {
   color: var(--sr-primary-dark) !important;
 }
 
+/* Hazard Markers, Clusters & Popups (Issue #13 — B4) */
+.sr-hazard-marker {
+  background: transparent;
+  border: 0;
+}
+
+.sr-hazard-pin {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  min-width: 30px;
+  height: 30px;
+  padding: 0 7px;
+  border-radius: 999px;
+  border: 2.5px solid #FFFFFF;
+  font-family: var(--sr-font-sans);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  box-shadow: 0 3px 10px rgba(15, 42, 67, 0.28);
+  transition: transform 120ms ease;
+}
+
+.sr-hazard-pin--low {
+  background: var(--sr-severity-low);
+  color: #FFFFFF;
+}
+
+.sr-hazard-pin--medium {
+  background: var(--sr-severity-medium);
+  color: var(--sr-ink);
+}
+
+.sr-hazard-pin--high {
+  background: var(--sr-severity-high);
+  color: #FFFFFF;
+}
+
+.sr-hazard-pin--selected {
+  transform: scale(1.15);
+  box-shadow: 0 0 0 3px var(--sr-primary-dark), 0 4px 14px rgba(15, 42, 67, 0.35);
+}
+
+.sr-hazard-pin--fixed {
+  opacity: 0.78;
+  border-style: dashed;
+}
+
+.sr-cluster-icon {
+  background: transparent;
+  border: 0;
+}
+
+.sr-cluster-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  border: 3px solid #FFFFFF;
+  background: var(--sr-primary);
+  color: #FFFFFF;
+  font-family: var(--sr-font-sans);
+  font-size: 13px;
+  font-weight: 800;
+  box-shadow: 0 4px 12px rgba(15, 42, 67, 0.28);
+}
+
+.sr-cluster-badge--high {
+  background: var(--sr-severity-high);
+}
+
+.sr-cluster-badge--medium {
+  background: var(--sr-severity-medium);
+  color: var(--sr-ink);
+}
+
+.sr-cluster-badge--low {
+  background: var(--sr-severity-low);
+}
+
+.sr-popup-card {
+  width: 248px;
+  max-width: calc(100vw - 72px);
+  font-family: var(--sr-font-sans);
+  color: var(--sr-ink);
+}
+
+.sr-popup-thumb {
+  width: 100%;
+  height: 112px;
+  border-radius: 8px;
+  object-fit: cover;
+  border: 1px solid var(--sr-border);
+  background: var(--sr-canvas);
+}
+
+.sr-popup-placeholder {
+  width: 100%;
+  height: 88px;
+  border-radius: 8px;
+  border: 1px dashed var(--sr-border);
+  background: var(--sr-canvas);
+  color: var(--sr-muted);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* Override Leaflet's `.leaflet-container a { color: #0078A8; }` for primary popup CTA */
+.leaflet-container a.sr-popup-cta {
+  background-color: var(--sr-primary);
+  color: #FFFFFF;
+  text-decoration: none;
+}
+
+.leaflet-container a.sr-popup-cta:hover,
+.leaflet-container a.sr-popup-cta:focus-visible {
+  background-color: var(--sr-primary-dark);
+  color: #FFFFFF;
+}
+
 /* Respect user reduced-motion preferences */
 @media (prefers-reduced-motion: reduce) {
   *,
