@@ -22,6 +22,7 @@ from app.deps import (
 from app.routers.auth import router as auth_router
 from app.routers.reports import router as reports_router
 from app.services.auth import AuthenticatedUser, AuthError
+from app.services.community import CommunityServiceError
 from app.services.duplicates import DuplicateServiceError
 from app.services.images import ImageValidationError
 from app.services.reports import ReportServiceError
@@ -234,6 +235,18 @@ async def handle_duplicate_service_error(
     exc: DuplicateServiceError,
 ) -> JSONResponse:
     """Return clean JSON errors for duplicate-check and confirm actions."""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.user_message},
+    )
+
+
+@app.exception_handler(CommunityServiceError)
+async def handle_community_service_error(
+    _request: Request,
+    exc: CommunityServiceError,
+) -> JSONResponse:
+    """Return clean JSON errors for community verification and comments actions."""
     return JSONResponse(
         status_code=exc.status_code,
         content={"detail": exc.user_message},

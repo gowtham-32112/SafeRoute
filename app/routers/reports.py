@@ -26,6 +26,17 @@ from app.deps import (
     get_settings,
     require_csrf,
 )
+from app.services.community import (
+    CommentCreateRequest,
+    CommentResponse,
+    CommentsListResponse,
+    CommunityServiceError,
+    VoteRequest,
+    VoteResponse,
+    cast_hazard_vote,
+    create_report_comment,
+    list_report_comments,
+)
 from app.services.duplicates import (
     ConfirmDuplicateRequest,
     ConfirmDuplicateResponse,
@@ -356,6 +367,161 @@ async def read_hazard_report(
     return get_report_by_id(
         report_id=report_id,
         access_token=ctx.access_token,
+        app_settings=app_settings,
+    )
+
+
+@router.post(
+    "/reports/{report_id}/vote",
+    response_model=VoteResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Cast a Verification or Fixed Vote on a Hazard Report",
+)
+@router.post(
+    "/reports/{report_id}/votes",
+    response_model=VoteResponse,
+    status_code=status.HTTP_200_OK,
+    include_in_schema=False,
+)
+async def vote_on_hazard_report(
+    report_id: str,
+    request: Request,
+    ctx: AuthenticatedContext = Depends(get_authenticated_context),
+    _csrf: None = Depends(require_csrf),
+    app_settings: Settings = Depends(get_settings),
+) -> VoteResponse:
+    """Record a verification vote (confirm, dispute, or fixed) for a hazard report.
+
+    Accepts JSON payloads or form data (including multipart with optional after-photo
+    for 'fixed' votes). Enforces self-voting prevention and duplicate vote rules.
+    """
+    content_type = request.headers.get("content-type", "").lower()
+    raw_photo_bytes: Optional[bytes] = None
+    photo_content_type: Optional[str] = None
+    vote_val: Optional[str] = None
+
+    if "multipart/form-data" in content_type:
+        form = await request.form()
+        try:
+            vote_val = _form_str(form, "vote") or _form_str(form, "vote_type")
+            raw_photo = form.get("after_photo") or form.get("image")
+            if isinstance(raw_photo, StarletteUploadFile) and raw_photo.filename:
+                raw_photo_bytes = await raw_photo.read(MAX_IMAGE_SIZE_BYTES + 1)
+                if len(raw_photo_bytes) > MAX_IMAGE_SIZE_BYTES:
+                    raise ImageTooLargeError()
+                photo_content_type = raw_photo.content_type
+        finally:
+            await form.close()
+    elif "application/x-www-form-urlencoded" in content_type:
+        form = await request.form()
+        try:
+            vote_val = _form_str(form, "vote") or _form_str(form, "vote_type")
+        finally:
+            await form.close()
+    else:
+        try:
+            body = await request.json()
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid JSON request body.",
+            ) from exc
+        if not isinstance(body, dict):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Request body must be a JSON object.",
+            )
+        vote_val = body.get("vote") or body.get("vote_type")
+
+    if not vote_val or not str(vote_val).strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Field 'vote' is required (confirm, dispute, or fixed).",
+        )
+
+    return cast_hazard_vote(
+        report_id=report_id,
+        user_id=ctx.user.id,
+        access_token=ctx.access_token,
+        vote_type=str(vote_val),
+        after_photo_bytes=raw_photo_bytes,
+        after_photo_content_type=photo_content_type,
+        app_settings=app_settings,
+    )
+
+
+@router.get(
+    "/reports/{report_id}/comments",
+    response_model=CommentsListResponse,
+    summary="List Community Comments for a Hazard Report",
+)
+async def get_hazard_comments(
+    report_id: str,
+    ctx: AuthenticatedContext = Depends(get_authenticated_context),
+    app_settings: Settings = Depends(get_settings),
+) -> CommentsListResponse:
+    """Return all community comments for a hazard report ordered chronologically."""
+    return list_report_comments(
+        report_id=report_id,
+        access_token=ctx.access_token,
+        app_settings=app_settings,
+    )
+
+
+@router.post(
+    "/reports/{report_id}/comments",
+    response_model=CommentResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Add a Community Comment to a Hazard Report",
+)
+async def add_hazard_comment(
+    report_id: str,
+    request: Request,
+    ctx: AuthenticatedContext = Depends(get_authenticated_context),
+    _csrf: None = Depends(require_csrf),
+    app_settings: Settings = Depends(get_settings),
+) -> CommentResponse:
+    """Submit a community comment on a hazard report with optional anonymity."""
+    content_type = request.headers.get("content-type", "").lower()
+    body_text: Optional[str] = None
+    hide_name = False
+
+    if "application/x-www-form-urlencoded" in content_type or "multipart/form-data" in content_type:
+        form = await request.form()
+        try:
+            body_text = _form_str(form, "body") or _form_str(form, "content") or _form_str(form, "text")
+            raw_hide = _form_str(form, "hide_name")
+            hide_name = raw_hide is not None and raw_hide.lower() in ("true", "1", "on", "yes")
+        finally:
+            await form.close()
+    else:
+        try:
+            json_body = await request.json()
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid JSON request body.",
+            ) from exc
+        if not isinstance(json_body, dict):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Request body must be a JSON object.",
+            )
+        body_text = json_body.get("body") or json_body.get("content") or json_body.get("text")
+        hide_name = bool(json_body.get("hide_name", False))
+
+    if not body_text or not str(body_text).strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Comment body cannot be empty.",
+        )
+
+    return create_report_comment(
+        report_id=report_id,
+        user_id=ctx.user.id,
+        access_token=ctx.access_token,
+        body=str(body_text),
+        hide_name=hide_name,
         app_settings=app_settings,
     )
 
