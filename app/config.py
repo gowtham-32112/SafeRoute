@@ -32,6 +32,14 @@ class Settings(BaseSettings):
 
     # Vision AI Configuration
     VISION_API_KEY: str = ""
+    GEMINI_API_KEY: str = ""
+    VISION_AI_MODEL: str = "gemini-2.5-flash"
+    VISION_AI_TIMEOUT_SECONDS: float = 8.0
+
+    @property
+    def active_vision_api_key(self) -> str:
+        """Return the active vision AI key (checking GEMINI_API_KEY then VISION_API_KEY)."""
+        return (self.GEMINI_API_KEY or self.VISION_API_KEY or "").strip()
 
     # Application Security & Environment
     SECRET_KEY: str = DEFAULT_DEV_SECRET_KEY

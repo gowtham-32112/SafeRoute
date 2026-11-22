@@ -160,38 +160,57 @@
         <input type="hidden" name="category" :value="category">
       </div>
 
-      {# Reserved AI Suggestion Chip Slot (For future C2 Vision integration) #}
+      {# AI Suggestion Chip Slot (C1 / C2 Vision Integration) #}
       <div
         id="sr-ai-suggestion-slot"
-        x-show="aiSuggestion"
+        x-show="aiSuggestion || aiAnalyzing"
         x-cloak
-        class="rounded-xl border border-primary/30 bg-primary-soft/80 p-3 flex items-center justify-between gap-3 text-xs"
+        class="rounded-xl border border-primary/30 bg-primary-soft/80 p-3 text-xs"
         role="region"
         aria-label="AI Category Suggestion"
       >
-        <div class="flex items-center gap-2 min-w-0">
-          <span class="inline-flex h-6 w-6 items-center justify-center rounded-full bg-primary text-white shrink-0" aria-hidden="true">
-            <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-              <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"></path>
-            </svg>
-          </span>
+        {# Analyzing State #}
+        <div x-show="aiAnalyzing" class="flex items-center gap-2.5 text-primary-dark">
+          <svg class="h-4 w-4 animate-spin text-primary shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+          </svg>
           <div class="min-w-0">
-            <p class="font-bold text-primary-dark truncate">
-              <span>Suggested category: </span>
-              <span x-text="aiSuggestion ? aiSuggestion.label : ''"></span>
-              <span class="font-medium text-muted" x-text="aiSuggestion && aiSuggestion.confidence ? ' (' + Math.round(aiSuggestion.confidence * 100) + '%)' : ''"></span>
+            <p class="font-bold text-primary-dark">
+              Analyzing photo for hazard category...
             </p>
-            <p class="text-[11px] text-muted truncate" x-text="aiSuggestion ? aiSuggestion.reason : ''"></p>
+            <p class="text-[11px] text-muted">
+              AI Vision suggestion will appear if a hazard type is recognized.
+            </p>
           </div>
         </div>
 
-        <button
-          type="button"
-          @click="applyAiSuggestion()"
-          class="shrink-0 rounded-full bg-primary hover:bg-primary-dark text-white font-semibold text-xs px-3 py-1.5 min-h-[32px] transition-colors"
-        >
-          Apply suggestion
-        </button>
+        {# Ready Suggestion State #}
+        <div x-show="!aiAnalyzing && aiSuggestion" class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div class="flex items-center gap-2 min-w-0">
+            <span class="inline-flex h-6 w-6 items-center justify-center rounded-full bg-primary text-white shrink-0" aria-hidden="true">
+              <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"></path>
+              </svg>
+            </span>
+            <div class="min-w-0">
+              <p class="font-bold text-primary-dark truncate">
+                <span>Suggested category: </span>
+                <span x-text="aiSuggestion ? aiSuggestion.label : ''"></span>
+                <span class="font-medium text-muted" x-text="aiSuggestion && aiSuggestion.confidence ? ' (' + Math.round(aiSuggestion.confidence * 100) + '%)' : ''"></span>
+              </p>
+              <p class="text-[11px] text-muted truncate" x-text="aiSuggestion ? aiSuggestion.reason : ''"></p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            @click="applyAiSuggestion()"
+            class="shrink-0 inline-flex items-center justify-center rounded-full bg-primary hover:bg-primary-dark text-white font-semibold text-xs px-3.5 py-1.5 min-h-[32px] transition-colors focus:outline-none focus:ring-2 focus:ring-primary/40"
+          >
+            Apply suggestion
+          </button>
+        </div>
       </div>
 
       {# 2. Evidence Photograph Upload #}

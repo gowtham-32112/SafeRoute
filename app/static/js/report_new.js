@@ -149,8 +149,11 @@
       photoFileSize: "",
       photoError: "",
 
-      // AI suggestion slot state (Issue #14, C2 hook)
+      // AI suggestion slot state (Issue #14, Stage 8 C1/C2 Vision)
       aiSuggestion: null,
+      aiAnalyzing: false,
+      aiAbortController: null,
+      aiRequestSeq: 0,
 
       // General form state
       formError: "",
@@ -360,9 +363,104 @@
         } catch (e) {
           this.photoPreviewUrl = "";
         }
+
+        // Trigger AI Category Suggestion in background (non-blocking)
+        this.requestAiCategorySuggestion(file);
+      },
+
+      requestAiCategorySuggestion: function (file) {
+        if (!file) {
+          return;
+        }
+
+        // Cancel previous pending AI request if any
+        if (this.aiAbortController) {
+          try {
+            this.aiAbortController.abort();
+          } catch (e) {
+            // Ignore abort error
+          }
+          this.aiAbortController = null;
+        }
+
+        this.aiRequestSeq += 1;
+        var currentSeq = this.aiRequestSeq;
+        var controller = null;
+        if (typeof window.AbortController === "function") {
+          controller = new window.AbortController();
+          this.aiAbortController = controller;
+        }
+
+        this.aiAnalyzing = true;
+        this.aiSuggestion = null;
+
+        var self = this;
+        var formEl = document.getElementById("sr-report-form");
+        var csrfToken = resolveCsrfToken(formEl);
+
+        var formData = new FormData();
+        formData.append("image", file);
+        if (csrfToken) {
+          formData.append("csrf_token", csrfToken);
+        }
+
+        var fetchHeaders = {
+          Accept: "application/json",
+        };
+        if (csrfToken) {
+          fetchHeaders["X-CSRF-Token"] = csrfToken;
+        }
+
+        fetch("/reports/suggest-category", {
+          method: "POST",
+          body: formData,
+          headers: fetchHeaders,
+          signal: controller ? controller.signal : undefined,
+          credentials: "same-origin",
+        })
+          .then(function (res) {
+            if (!res.ok) {
+              return null;
+            }
+            return res.json();
+          })
+          .then(function (data) {
+            if (self.aiRequestSeq !== currentSeq) {
+              return;
+            }
+            self.aiAnalyzing = false;
+            self.aiAbortController = null;
+            if (data && data.category) {
+              self.receiveAiSuggestion(data);
+            } else {
+              self.aiSuggestion = null;
+            }
+          })
+          .catch(function (err) {
+            if (err && (err.name === "AbortError" || err.code === 20)) {
+              return;
+            }
+            if (self.aiRequestSeq === currentSeq) {
+              self.aiAnalyzing = false;
+              self.aiAbortController = null;
+              self.aiSuggestion = null;
+            }
+          });
       },
 
       removePhoto: function () {
+        if (this.aiAbortController) {
+          try {
+            this.aiAbortController.abort();
+          } catch (e) {
+            // Ignore abort error
+          }
+          this.aiAbortController = null;
+        }
+        this.aiAnalyzing = false;
+        this.aiSuggestion = null;
+        this.aiRequestSeq += 1;
+
         if (this.photoPreviewUrl) {
           try {
             window.URL.revokeObjectURL(this.photoPreviewUrl);
