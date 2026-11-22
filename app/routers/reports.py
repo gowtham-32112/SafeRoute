@@ -1,5 +1,6 @@
 """Core Hazard Reports API, duplicate detection, map bounds, and SSE Realtime routes."""
 
+from pathlib import Path
 from typing import Any, Dict, Optional, Union
 
 from fastapi import (
@@ -8,16 +9,20 @@ from fastapi import (
     HTTPException,
     Query,
     Request,
+    Response,
     status,
 )
 from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
 from starlette.datastructures import FormData, UploadFile as StarletteUploadFile
 
 from app.config import Settings
 from app.deps import (
     AuthenticatedContext,
+    AuthenticatedUser,
     get_authenticated_context,
+    get_current_user,
     get_settings,
     require_csrf,
 )
@@ -38,6 +43,27 @@ from app.services.reports import (
     get_report_by_id,
     get_reports_in_bounds,
 )
+from app.services.session import issue_csrf_cookie
+
+TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
+templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+
+
+def _copy_set_cookie_headers(source: Response, target: Response) -> None:
+    """Propagate any Set-Cookie headers from a dependency/helper response onto target."""
+    for header_name, header_value in source.raw_headers:
+        if header_name.lower() == b"set-cookie":
+            target.raw_headers.append((header_name, header_value))
+
+
+def _prepare_page_csrf(request: Request, app_settings: Settings) -> tuple[str, Response]:
+    """Reuse an active CSRF double-submit cookie or issue a fresh one."""
+    existing = request.cookies.get(app_settings.CSRF_COOKIE_NAME, "").strip()
+    carrier = Response()
+    if existing:
+        return existing, carrier
+    token = issue_csrf_cookie(carrier, app_settings)
+    return token, carrier
 
 router = APIRouter(tags=["reports"])
 
@@ -279,6 +305,41 @@ async def confirm_duplicate_report(
         access_token=ctx.access_token,
         app_settings=app_settings,
     )
+
+
+@router.get(
+    "/reports/new",
+    response_model=None,
+    summary="Hazard Report Submission Form Page",
+)
+async def new_report_page(
+    request: Request,
+    response: Response,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    app_settings: Settings = Depends(get_settings),
+) -> Response:
+    """Render the authenticated hazard report submission form at /reports/new."""
+    csrf_token, csrf_carrier = _prepare_page_csrf(request, app_settings)
+    map_config = {
+        "fallbackLat": app_settings.DEFAULT_MAP_LAT,
+        "fallbackLng": app_settings.DEFAULT_MAP_LNG,
+        "fallbackLabel": "Kukatpally Y Junction",
+        "defaultZoom": app_settings.DEFAULT_MAP_ZOOM,
+        "geolocationTimeoutMs": int(app_settings.GEOLOCATION_TIMEOUT_SECONDS * 1000),
+    }
+    template_resp = templates.TemplateResponse(
+        request=request,
+        name="report_new.html",
+        context={
+            "current_user": current_user,
+            "active_nav": "report",
+            "csrf_token": csrf_token,
+            "map_config": map_config,
+        },
+    )
+    _copy_set_cookie_headers(response, template_resp)
+    _copy_set_cookie_headers(csrf_carrier, template_resp)
+    return template_resp
 
 
 @router.get(
