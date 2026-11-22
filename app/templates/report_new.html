@@ -1,0 +1,536 @@
+{% extends "base.html" %}
+{% from "components/ui.html" import card, button, severity_badge %}
+
+{% block title %}Report a Road Hazard — SafeRoute{% endblock %}
+{% block meta_description %}Report a pothole, road break, dark streetlight, or footpath hazard to keep your community aware and safe.{% endblock %}
+
+{% block head_extra %}
+  {# Leaflet CSS & JS for Interactive Hazard Pin Picker #}
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin=""
+  >
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+  ></script>
+
+  {# Map Config Data for Fallback Coordinates #}
+  <script id="sr-map-config" type="application/json">
+    {{ map_config | tojson | safe }}
+  </script>
+
+  {# Report Form Controller #}
+  <script src="/static/js/report_new.js"></script>
+{% endblock %}
+
+{% block content %}
+<div class="w-full max-w-3xl mx-auto py-2 sm:py-6 space-y-6" x-data="srReportForm()">
+  {# Back Navigation Link #}
+  <div>
+    <a
+      href="/map"
+      class="inline-flex items-center gap-1.5 text-xs sm:text-sm font-semibold text-primary hover:text-primary-dark underline underline-offset-2 transition-colors"
+      aria-label="Back to live map"
+    >
+      <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <line x1="19" y1="12" x2="5" y2="12"></line>
+        <polyline points="12 19 5 12 12 5"></polyline>
+      </svg>
+      <span>Back to map</span>
+    </a>
+  </div>
+
+  {# Page Heading #}
+  <header class="space-y-1.5">
+    <h1 class="text-2xl sm:text-3xl font-extrabold text-primary-dark tracking-tight">
+      Report a Road Hazard
+    </h1>
+    <p class="text-xs sm:text-sm text-muted leading-relaxed">
+      Help fellow citizens and route planners navigate safely. Select the hazard category, attach a clear photo, and pin the location on the map.
+    </p>
+  </header>
+
+  {# Mandatory Driving Safety Warning Banner (Spec Section 12, AGENTS.md Section 15) #}
+  <section
+    role="alert"
+    aria-label="Driving safety notice"
+    class="rounded-card border border-severity-medium/50 bg-[#FEF6E7] p-4 flex items-start gap-3 shadow-sm"
+  >
+    <span class="inline-flex h-8 w-8 items-center justify-center rounded-full bg-[#F5A524] text-ink shrink-0 mt-0.5" aria-hidden="true">
+      <svg class="h-5 w-5 text-ink" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"></path>
+        <line x1="12" y1="9" x2="12" y2="13"></line>
+        <line x1="12" y1="17" x2="12.01" y2="17"></line>
+      </svg>
+    </span>
+    <div class="min-w-0 flex-1">
+      <p class="text-xs sm:text-sm font-extrabold text-ink uppercase tracking-wide">
+        Driving Safety Warning
+      </p>
+      <p class="mt-0.5 text-xs sm:text-sm font-bold text-ink leading-snug">
+        Never photograph hazards while driving or riding. Stop safely first.
+      </p>
+    </div>
+  </section>
+
+  {# Report Submission Form #}
+  {% call card(padding="p-5 sm:p-8") %}
+    <form
+      id="sr-report-form"
+      method="post"
+      action="/reports"
+      enctype="multipart/form-data"
+      novalidate
+      @submit.prevent="handleSubmit($event)"
+      class="space-y-8"
+    >
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+      {# Form-Level Error Alert #}
+      <div
+        x-show="formError"
+        x-cloak
+        role="alert"
+        aria-live="assertive"
+        class="rounded-lg border border-severity-high/40 sr-severity-high px-4 py-3 text-sm leading-snug space-y-1"
+      >
+        <p class="font-bold text-xs uppercase tracking-wide">Unable to submit report</p>
+        <p class="font-medium" x-text="formError"></p>
+      </div>
+
+      {# 1. Category Selection Cards #}
+      <div class="space-y-3">
+        <div class="flex items-center justify-between gap-2">
+          <div>
+            <h2 class="text-base font-bold text-primary-dark">
+              1. Hazard Category
+            </h2>
+            <p class="text-xs text-muted">
+              Choose the category that best represents the road hazard.
+            </p>
+          </div>
+          <span
+            x-show="category"
+            x-cloak
+            class="text-xs font-semibold text-primary capitalize bg-primary-soft px-2.5 py-0.5 rounded-full"
+            x-text="getCategoryLabel(category)"
+          ></span>
+        </div>
+
+        {# Accessible Radiogroup #}
+        <div
+          role="radiogroup"
+          aria-label="Select hazard category"
+          class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3"
+        >
+          <template x-for="cat in categories" :key="cat.key">
+            <button
+              type="button"
+              role="radio"
+              :id="'sr-cat-' + cat.key"
+              :data-category="cat.key"
+              :aria-checked="category === cat.key ? 'true' : 'false'"
+              @click="selectCategory(cat.key)"
+              @keydown.enter.prevent="selectCategory(cat.key)"
+              @keydown.space.prevent="selectCategory(cat.key)"
+              class="sr-category-card"
+              :class="category === cat.key ? 'sr-category-card--selected' : ''"
+            >
+              <div class="flex items-center justify-between w-full">
+                <span class="text-sm font-bold text-ink" x-text="cat.label"></span>
+                <span
+                  class="h-4 w-4 rounded-full border border-primary flex items-center justify-center shrink-0"
+                  :class="category === cat.key ? 'bg-primary' : 'bg-surface'"
+                  aria-hidden="true"
+                >
+                  <span
+                    class="h-1.5 w-1.5 rounded-full bg-white"
+                    x-show="category === cat.key"
+                  ></span>
+                </span>
+              </div>
+              <p class="mt-1 text-xs text-muted leading-relaxed" x-text="cat.description"></p>
+            </button>
+          </template>
+        </div>
+        <input type="hidden" name="category" :value="category">
+      </div>
+
+      {# Reserved AI Suggestion Chip Slot (For future C2 Vision integration) #}
+      <div
+        id="sr-ai-suggestion-slot"
+        x-show="aiSuggestion"
+        x-cloak
+        class="rounded-xl border border-primary/30 bg-primary-soft/80 p-3 flex items-center justify-between gap-3 text-xs"
+        role="region"
+        aria-label="AI Category Suggestion"
+      >
+        <div class="flex items-center gap-2 min-w-0">
+          <span class="inline-flex h-6 w-6 items-center justify-center rounded-full bg-primary text-white shrink-0" aria-hidden="true">
+            <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"></path>
+            </svg>
+          </span>
+          <div class="min-w-0">
+            <p class="font-bold text-primary-dark truncate">
+              <span>Suggested category: </span>
+              <span x-text="aiSuggestion ? aiSuggestion.label : ''"></span>
+              <span class="font-medium text-muted" x-text="aiSuggestion && aiSuggestion.confidence ? ' (' + Math.round(aiSuggestion.confidence * 100) + '%)' : ''"></span>
+            </p>
+            <p class="text-[11px] text-muted truncate" x-text="aiSuggestion ? aiSuggestion.reason : ''"></p>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          @click="applyAiSuggestion()"
+          class="shrink-0 rounded-full bg-primary hover:bg-primary-dark text-white font-semibold text-xs px-3 py-1.5 min-h-[32px] transition-colors"
+        >
+          Apply suggestion
+        </button>
+      </div>
+
+      {# 2. Evidence Photograph Upload #}
+      <div class="space-y-3">
+        <div>
+          <h2 class="text-base font-bold text-primary-dark">
+            2. Evidence Photograph
+          </h2>
+          <p class="text-xs text-muted">
+            Provide a photograph of the hazard. Photos improve verification and community awareness.
+          </p>
+        </div>
+
+        {# Hidden Native File Input #}
+        <input
+          type="file"
+          id="sr-photo-input"
+          name="image"
+          accept="image/jpeg,image/png,image/webp"
+          class="sr-only"
+          @change="handleFileChange($event)"
+        >
+
+        {# Dropzone (Shown when no file is chosen) #}
+        <div
+          x-show="!photoPreviewUrl"
+          @click="triggerPhotoInput()"
+          @dragover.prevent
+          @drop.prevent="handleFileDrop($event)"
+          tabindex="0"
+          role="button"
+          aria-label="Upload hazard photograph"
+          @keydown.enter.prevent="triggerPhotoInput()"
+          @keydown.space.prevent="triggerPhotoInput()"
+          class="sr-photo-dropzone p-6 sm:p-8 text-center cursor-pointer space-y-2 select-none"
+        >
+          <div class="mx-auto inline-flex h-12 w-12 items-center justify-center rounded-full bg-primary-soft text-primary" aria-hidden="true">
+            <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"></path>
+              <circle cx="12" cy="13" r="4"></circle>
+            </svg>
+          </div>
+          <p class="text-sm font-bold text-ink">
+            Tap or drag to upload a hazard photo
+          </p>
+          <p class="text-xs text-muted">
+            Supports JPEG, PNG, WebP &middot; Max 5 MB
+          </p>
+        </div>
+
+        {# Photo Preview Card (Shown when file is chosen) #}
+        <div
+          x-show="photoPreviewUrl"
+          x-cloak
+          class="rounded-card border border-border bg-surface p-4 flex flex-col sm:flex-row items-center gap-4"
+        >
+          <img
+            :src="photoPreviewUrl"
+            alt="Uploaded hazard evidence preview"
+            class="h-28 w-28 object-cover rounded-lg border border-border bg-canvas shrink-0"
+          >
+          <div class="min-w-0 flex-1 space-y-1 text-center sm:text-left">
+            <p class="text-xs sm:text-sm font-bold text-ink truncate" x-text="photoFileName"></p>
+            <p class="text-xs text-muted" x-text="photoFileSize"></p>
+            <div class="pt-2 flex flex-wrap gap-2 justify-center sm:justify-start">
+              <button
+                type="button"
+                @click="triggerPhotoInput()"
+                class="inline-flex items-center justify-center rounded-full border border-border bg-surface text-ink hover:bg-primary-soft text-xs font-semibold px-3 py-1.5 min-h-[32px] transition-colors"
+              >
+                Change photo
+              </button>
+              <button
+                type="button"
+                @click="removePhoto()"
+                class="inline-flex items-center justify-center rounded-full border border-severity-high/30 bg-surface text-red-700 hover:bg-red-50 text-xs font-semibold px-3 py-1.5 min-h-[32px] transition-colors"
+              >
+                Remove photo
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {# Photo Validation Error #}
+        <div
+          x-show="photoError"
+          x-cloak
+          role="alert"
+          class="rounded-lg border border-severity-high/40 sr-severity-high px-3.5 py-2 text-xs font-semibold"
+          x-text="photoError"
+        ></div>
+
+        {# Privacy Note for Uploaded Photos #}
+        <p class="text-[11px] text-muted leading-relaxed">
+          <strong>Privacy guarantee:</strong> SafeRoute automatically strips all EXIF metadata, GPS tags, and device information upon upload before storage.
+        </p>
+      </div>
+
+      {# 3. Hazard Location & Interactive Pin Picker #}
+      <div class="space-y-3">
+        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+          <div>
+            <h2 class="text-base font-bold text-primary-dark">
+              3. Hazard Location
+            </h2>
+            <p class="text-xs text-muted">
+              Click the map or drag the marker to position the hazard pin accurately.
+            </p>
+          </div>
+
+          {# "Use My Location" Button #}
+          <button
+            id="sr-use-location-btn"
+            type="button"
+            @click="useMyLocation()"
+            :disabled="locating"
+            :aria-busy="locating.toString()"
+            class="inline-flex items-center justify-center gap-1.5 rounded-full border border-primary bg-primary-soft text-primary-dark hover:bg-primary hover:text-white text-xs font-semibold px-3.5 py-1.5 min-h-[36px] transition-colors shrink-0 disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="3"></circle>
+              <path d="M12 2v3"></path>
+              <path d="M12 19v3"></path>
+              <path d="M2 12h3"></path>
+              <path d="M19 12h3"></path>
+            </svg>
+            <span x-text="locating ? 'Locating you...' : 'Use my location'">Use my location</span>
+          </button>
+        </div>
+
+        {# Location Status Message #}
+        <div
+          role="status"
+          aria-live="polite"
+          class="rounded-lg border border-border bg-canvas px-3.5 py-2 text-xs text-muted flex items-center justify-between gap-2"
+        >
+          <span class="truncate" x-text="locationStatus">
+            Default map area: Kukatpally Y Junction. Pan map or tap 'Use my location'.
+          </span>
+          <span
+            class="text-[11px] font-mono font-semibold text-primary shrink-0"
+            x-text="lat && lng ? lat.toFixed(5) + ', ' + lng.toFixed(5) : ''"
+          ></span>
+        </div>
+
+        {# Leaflet Pin-Picker Map Canvas #}
+        <div
+          id="sr-picker-map"
+          role="region"
+          aria-label="Interactive hazard location pin picker map"
+          tabindex="0"
+          class="sr-picker-canvas"
+        ></div>
+
+        <input type="hidden" name="lat" :value="lat">
+        <input type="hidden" name="lng" :value="lng">
+
+        {# Location Privacy Notice #}
+        <p class="text-[11px] text-muted leading-relaxed">
+          <strong>Location privacy:</strong> SafeRoute never tracks or persists your live browser location. Only the final hazard pin coordinates are saved with your report.
+        </p>
+      </div>
+
+      {# 4. Description & Landmark / Address #}
+      <div class="space-y-4">
+        <div>
+          <h2 class="text-base font-bold text-primary-dark">
+            4. Details & Landmarks
+          </h2>
+          <p class="text-xs text-muted">
+            Provide descriptive context so drivers and repair authorities can easily understand the issue.
+          </p>
+        </div>
+
+        {# Description Input #}
+        <div class="space-y-1.5">
+          <label for="sr-description-input" class="block text-xs font-bold uppercase tracking-wider text-muted">
+            Hazard Description <span class="text-red-600" aria-hidden="true">*</span>
+          </label>
+          <textarea
+            id="sr-description-input"
+            name="description"
+            rows="3"
+            x-model="description"
+            required
+            maxlength="1000"
+            placeholder="e.g., Deep pothole in the left lane near the bus stop, hard to see at night..."
+            class="w-full rounded-lg border border-border bg-surface p-3 text-sm text-ink placeholder:text-muted focus:border-primary focus:ring-2 focus:ring-primary/20 transition-colors"
+          ></textarea>
+        </div>
+
+        {# Landmark / Address Input (Optional) #}
+        <div class="space-y-1.5">
+          <label for="sr-address-input" class="block text-xs font-bold uppercase tracking-wider text-muted">
+            Landmark or Street Name <span class="text-xs font-normal text-muted">(Optional)</span>
+          </label>
+          <input
+            type="text"
+            id="sr-address-input"
+            name="address_text"
+            x-model="addressText"
+            maxlength="255"
+            placeholder="e.g., Near Metro Pillar 78, Service Road"
+            class="w-full rounded-lg border border-border bg-surface px-3.5 py-2.5 text-sm text-ink placeholder:text-muted focus:border-primary focus:ring-2 focus:ring-primary/20 transition-colors"
+          >
+        </div>
+      </div>
+
+      {# Form Submission Actions #}
+      <div class="pt-4 border-t border-border flex flex-col-reverse sm:flex-row items-center justify-end gap-3">
+        <a
+          href="/map"
+          class="w-full sm:w-auto inline-flex items-center justify-center rounded-full border border-border bg-surface text-ink hover:bg-primary-soft text-sm font-semibold px-5 py-2.5 min-h-[44px] transition-colors text-center"
+        >
+          Cancel
+        </a>
+
+        <button
+          id="sr-submit-btn"
+          type="submit"
+          :disabled="submitting || checkingDuplicate"
+          :aria-busy="(submitting || checkingDuplicate).toString()"
+          class="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-full bg-primary hover:bg-primary-dark active:bg-primary-dark text-white text-sm font-semibold px-6 py-2.5 min-h-[44px] shadow-sm transition-colors duration-150 disabled:opacity-60 disabled:cursor-not-allowed"
+        >
+          <svg
+            x-show="submitting || checkingDuplicate"
+            class="h-4 w-4 animate-spin motion-reduce:animate-none"
+            viewBox="0 0 24 24"
+            fill="none"
+            aria-hidden="true"
+          >
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"></circle>
+            <path class="opacity-90" fill="currentColor" d="M4 12a8 8 0 018-8v3a5 5 0 00-5 5H4z"></path>
+          </svg>
+          <span x-text="submitting ? 'Submitting report...' : (checkingDuplicate ? 'Checking duplicates...' : 'Submit hazard report')">
+            Submit hazard report
+          </span>
+        </button>
+      </div>
+    </form>
+  {% endcall %}
+
+  {# Duplicate Hazard Detection Modal (Spec Section 8, Issue #14) #}
+  <div
+    id="sr-duplicate-modal"
+    x-show="duplicateModalOpen"
+    x-cloak
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="sr-duplicate-modal-title"
+    class="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6"
+    @keydown.escape.window="closeDuplicateModal()"
+  >
+    {# Backdrop #}
+    <div
+      class="fixed inset-0 sr-modal-backdrop transition-opacity"
+      @click="closeDuplicateModal()"
+      aria-hidden="true"
+    ></div>
+
+    {# Modal Panel #}
+    <div
+      class="relative w-full max-w-lg rounded-card bg-surface border border-border shadow-elevated p-6 sm:p-7 space-y-5 text-ink z-10"
+      @click.stop
+    >
+      <header class="space-y-1">
+        <h2 id="sr-duplicate-modal-title" class="text-lg sm:text-xl font-extrabold text-primary-dark tracking-tight">
+          Possible Duplicate Hazard Found
+        </h2>
+        <p class="text-xs sm:text-sm text-muted leading-relaxed">
+          An existing report in the same category was found within 30 metres of this location reported in the last 30 days.
+        </p>
+      </header>
+
+      {# Matched Report Summary Card #}
+      <div class="rounded-card border border-border bg-canvas p-4 space-y-2.5">
+        <div class="flex items-center justify-between gap-2">
+          <span
+            class="text-xs font-bold text-primary-dark uppercase tracking-wider"
+            x-text="duplicateMatch ? duplicateMatch.categoryLabel : ''"
+          ></span>
+          <span
+            class="inline-flex items-center rounded-full bg-primary-soft text-primary-dark px-2.5 py-0.5 text-xs font-semibold"
+            x-text="duplicateMatch ? duplicateMatch.distanceText : ''"
+          ></span>
+        </div>
+
+        {# Safe text description rendering (zero innerHTML) #}
+        <p
+          class="text-xs text-ink leading-relaxed line-clamp-3"
+          x-text="duplicateMatch && duplicateMatch.description ? duplicateMatch.description : 'No description provided.'"
+        ></p>
+
+        <div class="pt-1 flex items-center justify-between text-[11px] text-muted">
+          <span x-text="duplicateMatch ? 'Status: ' + duplicateMatch.status : ''"></span>
+          <span x-text="duplicateMatch ? duplicateMatch.freshness : ''"></span>
+        </div>
+      </div>
+
+      {# Two Choices per Spec Section 8 & Issue #14 #}
+      <div class="space-y-2.5 pt-2">
+        <button
+          id="sr-confirm-duplicate-btn"
+          type="button"
+          @click="confirmExistingDuplicate()"
+          :disabled="confirmingDuplicate"
+          :aria-busy="confirmingDuplicate.toString()"
+          class="w-full inline-flex items-center justify-center gap-2 rounded-full bg-primary hover:bg-primary-dark text-white font-semibold text-sm px-5 py-2.5 min-h-[44px] shadow-sm transition-colors duration-150 disabled:opacity-60"
+        >
+          <svg
+            x-show="confirmingDuplicate"
+            class="h-4 w-4 animate-spin motion-reduce:animate-none"
+            viewBox="0 0 24 24"
+            fill="none"
+            aria-hidden="true"
+          >
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"></circle>
+            <path class="opacity-90" fill="currentColor" d="M4 12a8 8 0 018-8v3a5 5 0 00-5 5H4z"></path>
+          </svg>
+          <span x-text="confirmingDuplicate ? 'Confirming hazard...' : 'Same hazard, add my confirmation'">
+            Same hazard, add my confirmation
+          </span>
+        </button>
+
+        <button
+          id="sr-submit-anyway-btn"
+          type="button"
+          @click="submitAnyway()"
+          :disabled="confirmingDuplicate"
+          class="w-full inline-flex items-center justify-center rounded-full border border-border bg-surface hover:bg-primary-soft text-ink font-semibold text-sm px-5 py-2.5 min-h-[44px] transition-colors duration-150"
+        >
+          Different, submit anyway
+        </button>
+      </div>
+
+      <p class="text-[11px] text-muted text-center leading-relaxed">
+        Confirming helps the community by raising the hazard's confidence and severity score without cluttering the map with duplicates.
+      </p>
+    </div>
+  </div>
+</div>
+{% endblock %}

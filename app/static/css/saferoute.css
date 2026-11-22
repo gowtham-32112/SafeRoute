@@ -352,6 +352,65 @@ body {
   color: #FFFFFF;
 }
 
+/* Hazard Report Form & Pin Picker (Issue #14 — B5) */
+.sr-category-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 1rem;
+  border-radius: var(--sr-radius-card);
+  border: 1.5px solid var(--sr-border);
+  background-color: var(--sr-surface);
+  color: var(--sr-ink);
+  text-align: left;
+  transition: all 150ms ease;
+  cursor: pointer;
+}
+
+.sr-category-card:hover {
+  border-color: var(--sr-primary);
+  background-color: var(--sr-primary-soft);
+}
+
+.sr-category-card--selected {
+  border-color: var(--sr-primary) !important;
+  background-color: var(--sr-primary-soft) !important;
+  box-shadow: 0 0 0 2px var(--sr-primary), var(--sr-shadow-card);
+}
+
+.sr-photo-dropzone {
+  border: 2px dashed var(--sr-border);
+  border-radius: var(--sr-radius-card);
+  background-color: var(--sr-canvas);
+  transition: border-color 150ms ease, background-color 150ms ease;
+}
+
+.sr-photo-dropzone:hover,
+.sr-photo-dropzone:focus-within {
+  border-color: var(--sr-primary);
+  background-color: var(--sr-primary-soft);
+}
+
+.sr-picker-canvas {
+  height: 280px;
+  width: 100%;
+  border-radius: var(--sr-radius-card);
+  border: 1px solid var(--sr-border);
+  background-color: var(--sr-canvas);
+}
+
+@media (min-width: 640px) {
+  .sr-picker-canvas {
+    height: 320px;
+  }
+}
+
+.sr-modal-backdrop {
+  background-color: rgba(15, 42, 67, 0.65);
+  backdrop-filter: blur(4px);
+}
+
 /* Respect user reduced-motion preferences */
 @media (prefers-reduced-motion: reduce) {
   *,
