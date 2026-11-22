@@ -1,0 +1,696 @@
+{% extends "base.html" %}
+{% from "components/ui.html" import card, button, severity_badge %}
+
+{% block title %}{{ report.category | replace('_', ' ') | title }} Hazard Report — SafeRoute{% endblock %}
+{% block meta_description %}Community hazard report for {{ report.category | replace('_', ' ') }}. Review severity breakdown, community verifications, and comments.{% endblock %}
+
+{% block head_extra %}
+  {# Report Detail Controller #}
+  <script src="/static/js/report_detail.js"></script>
+
+  {# Initial Page Config Data #}
+  <script id="sr-report-detail-config" type="application/json">
+    {
+      "reportId": {{ report.id | tojson }},
+      "isOwnReport": {{ is_own_report | tojson }},
+      "status": {{ report.status | tojson }},
+      "confirmCount": {{ report.confirm_count | tojson }},
+      "disputeCount": {{ report.dispute_count | tojson }},
+      "fixedCount": {{ report.fixed_count | tojson }},
+      "severityScore": {{ report.severity_score | tojson }},
+      "severityBand": {{ report.severity_band | tojson }},
+      "confidence": {{ report.confidence | tojson }},
+      "escalationRecommended": {{ report.escalation_recommended | tojson }},
+      "fixedAt": {{ report.fixed_at | tojson }},
+      "escalatedAt": {{ report.escalated_at | tojson }},
+      "csrfToken": {{ csrf_token | tojson }},
+      "comments": [
+        {% for c in comments %}
+          {
+            "id": {{ c.id | tojson }},
+            "report_id": {{ c.report_id | tojson }},
+            "user_id": {{ c.user_id | tojson }},
+            "author_name": {{ c.author_name | tojson }},
+            "body": {{ c.body | tojson }},
+            "is_anonymous": {{ c.is_anonymous | tojson }},
+            "created_at": {{ c.created_at | tojson }}
+          }{% if not loop.last %},{% endif %}
+        {% endfor %}
+      ]
+    }
+  </script>
+{% endblock %}
+
+{% block content %}
+<div
+  class="w-full max-w-4xl mx-auto py-3 sm:py-6 space-y-6"
+  x-data="srReportDetail()"
+>
+  {# Back Navigation Link #}
+  <div>
+    <a
+      href="/map"
+      class="inline-flex items-center gap-1.5 text-xs sm:text-sm font-semibold text-primary hover:text-primary-dark underline underline-offset-2 transition-colors"
+      aria-label="Back to live map"
+    >
+      <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <line x1="19" y1="12" x2="5" y2="12"></line>
+        <polyline points="12 19 5 12 12 5"></polyline>
+      </svg>
+      <span>Back to map</span>
+    </a>
+  </div>
+
+  {# Top Header & Badges #}
+  <header class="rounded-card border border-border bg-surface p-5 sm:p-6 shadow-card space-y-4">
+    <div class="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+      <div class="space-y-1.5">
+        <div class="flex flex-wrap items-center gap-2">
+          {# Status Badge #}
+          <template x-if="isFixed">
+            <span class="inline-flex items-center gap-1 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 px-3 py-1 text-xs font-bold uppercase tracking-wider">
+              <svg class="h-3.5 w-3.5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+                <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
+              </svg>
+              Fixed
+            </span>
+          </template>
+          <template x-if="!isFixed && isEscalated">
+            <span class="inline-flex items-center gap-1 rounded-full bg-amber-100 text-amber-900 border border-amber-300 px-3 py-1 text-xs font-bold uppercase tracking-wider">
+              <svg class="h-3.5 w-3.5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+                <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
+              </svg>
+              Escalated
+            </span>
+          </template>
+          <template x-if="!isFixed && !isEscalated">
+            <span class="inline-flex items-center gap-1 rounded-full bg-primary-soft text-primary-dark border border-primary/20 px-3 py-1 text-xs font-bold uppercase tracking-wider">
+              Open
+            </span>
+          </template>
+
+          {# Severity Badge #}
+          <span
+            id="sr-detail-severity-badge"
+            class="inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-bold"
+            :class="{
+              'sr-severity-high': severityBand === 'high',
+              'sr-severity-medium': severityBand === 'medium',
+              'sr-severity-low': severityBand === 'low'
+            }"
+          >
+            <span
+              class="h-2 w-2 rounded-full shrink-0"
+              :class="{
+                'sr-severity-high-dot': severityBand === 'high',
+                'sr-severity-medium-dot': severityBand === 'medium',
+                'sr-severity-low-dot': severityBand === 'low'
+              }"
+            ></span>
+            <span x-text="severityBandLabel"></span>
+            <span class="opacity-80">&middot; <span x-text="severityScore">{{ report.severity_score }}</span></span>
+          </span>
+
+          {# Confidence Badge #}
+          <span
+            id="sr-detail-confidence-badge"
+            class="inline-flex items-center rounded-full bg-canvas border border-border px-2.5 py-0.5 text-xs font-medium text-muted"
+            x-text="confidenceLabel"
+          >
+            {{ report.confidence | title }} confidence
+          </span>
+
+          {# Seed Data Pill #}
+          {% if report.is_seed %}
+            <span class="inline-flex items-center rounded-full bg-slate-100 text-slate-700 px-2.5 py-0.5 text-xs font-medium border border-slate-200">
+              Sample Report
+            </span>
+          {% endif %}
+        </div>
+
+        <h1 class="text-2xl sm:text-3xl font-extrabold text-primary-dark tracking-tight">
+          {{ report.category | replace('_', ' ') | title }}
+        </h1>
+
+        <p class="text-xs sm:text-sm text-muted">
+          {% if report.address_text %}
+            {{ report.address_text }} &middot;
+          {% endif %}
+          Coordinates: {{ "%.4f"|format(report.lat) }}, {{ "%.4f"|format(report.lng) }}
+        </p>
+      </div>
+
+      {# Freshness Badge #}
+      <div class="sm:text-right shrink-0">
+        <span class="text-xs text-muted">
+          Reported
+          {% if breakdown.age_days == 0 %}
+            today
+          {% elif breakdown.age_days == 1 %}
+            1 day ago
+          {% else %}
+            {{ breakdown.age_days }} days ago
+          {% endif %}
+        </span>
+      </div>
+    </div>
+
+    {# Prominent Escalation Banner if Escalated #}
+    <template x-if="isEscalated">
+      <div class="rounded-xl border border-amber-300 bg-[#FEF6E7] p-3.5 text-xs sm:text-sm text-ink flex items-center gap-2.5">
+        <svg class="h-5 w-5 text-[#F5A524] shrink-0" viewBox="0 0 20 20" fill="currentColor">
+          <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
+        </svg>
+        <span>
+          <strong>Escalated to higher authority:</strong> This hazard was flagged for administrative review due to high severity or multiple community confirmations.
+        </span>
+      </div>
+    </template>
+
+    {# Stale Notice if Older than 30 Days and Not Fixed #}
+    {% if breakdown.is_stale and report.status != 'fixed' %}
+      <div class="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs sm:text-sm text-amber-900 flex items-center gap-2">
+        <svg class="h-4 w-4 text-amber-600 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+          <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
+        </svg>
+        <span>
+          <strong>Stale &ndash; may no longer be accurate:</strong> No activity has been reported for 30+ days. Please verify if this hazard is still present.
+        </span>
+      </div>
+    {% endif %}
+
+    {# Description #}
+    <div class="pt-2 border-t border-border">
+      <h2 class="text-xs font-bold text-muted uppercase tracking-wider mb-1">Description</h2>
+      <p class="text-sm text-ink leading-relaxed whitespace-pre-line">{{ report.description }}</p>
+    </div>
+  </header>
+
+  {# Evidence & After Photo Gallery #}
+  <section class="rounded-card border border-border bg-surface p-5 sm:p-6 shadow-card space-y-4">
+    <h2 class="text-lg font-bold text-primary-dark tracking-tight">Photographic Evidence</h2>
+
+    {% set evidence_images = report.images | selectattr("kind", "equalto", "evidence") | list %}
+    {% set after_images = report.images | selectattr("kind", "equalto", "after") | list %}
+
+    <div class="space-y-4">
+      <div>
+        <h3 class="text-xs font-semibold text-muted uppercase tracking-wider mb-2">Original Hazard Photo</h3>
+        {% if evidence_images | length > 0 %}
+          <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+            {% for img in evidence_images %}
+              <div class="space-y-1">
+                {% if img.signed_url %}
+                  <img
+                    src="{{ img.signed_url }}"
+                    alt="{{ report.category | replace('_', ' ') }} evidence photo"
+                    class="sr-gallery-thumb w-full"
+                    loading="lazy"
+                  >
+                {% else %}
+                  <div class="sr-gallery-thumb w-full flex items-center justify-center p-4 text-xs text-muted text-center">
+                    Photo unavailable
+                  </div>
+                {% endif %}
+                <p class="text-[11px] text-muted">Uploaded with report</p>
+              </div>
+            {% endfor %}
+          </div>
+        {% elif report.images | length > 0 %}
+          {# Fallback if images didn't specify kind='evidence' explicitly #}
+          <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+            {% for img in report.images %}
+              {% if img.kind != 'after' %}
+                <div class="space-y-1">
+                  {% if img.signed_url %}
+                    <img
+                      src="{{ img.signed_url }}"
+                      alt="{{ report.category | replace('_', ' ') }} photo"
+                      class="sr-gallery-thumb w-full"
+                      loading="lazy"
+                    >
+                  {% else %}
+                    <div class="sr-gallery-thumb w-full flex items-center justify-center p-4 text-xs text-muted text-center">
+                      Photo unavailable
+                    </div>
+                  {% endif %}
+                  <p class="text-[11px] text-muted">Uploaded with report</p>
+                </div>
+              {% endif %}
+            {% endfor %}
+          </div>
+        {% else %}
+          <div class="rounded-xl border border-dashed border-border bg-canvas p-6 text-center text-xs sm:text-sm text-muted">
+            No photograph was attached to this report.
+          </div>
+        {% endif %}
+      </div>
+
+      {# After-Repair Photos (if any) #}
+      {% if after_images | length > 0 %}
+        <div class="pt-4 border-t border-border">
+          <div class="flex items-center gap-2 mb-2">
+            <h3 class="text-xs font-semibold text-muted uppercase tracking-wider">After-Repair Photos</h3>
+            <span class="inline-flex items-center rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 px-2 py-0.5 text-[10px] font-bold">
+              Fixed Proof
+            </span>
+          </div>
+          <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+            {% for img in after_images %}
+              <div class="space-y-1">
+                {% if img.signed_url %}
+                  <img
+                    src="{{ img.signed_url }}"
+                    alt="Repaired hazard after-photo"
+                    class="sr-gallery-thumb w-full border-emerald-300"
+                    loading="lazy"
+                  >
+                {% else %}
+                  <div class="sr-gallery-thumb w-full flex items-center justify-center p-4 text-xs text-muted text-center">
+                    After-photo unavailable
+                  </div>
+                {% endif %}
+                <p class="text-[11px] text-muted">Uploaded by community member</p>
+              </div>
+            {% endfor %}
+          </div>
+        </div>
+      {% endif %}
+    </div>
+  </section>
+
+  {# Severity Score Breakdown Card (Spec Section 8) #}
+  <section class="rounded-card border border-border bg-surface p-5 sm:p-6 shadow-card space-y-4">
+    <div class="flex items-center justify-between">
+      <div>
+        <h2 class="text-lg font-bold text-primary-dark tracking-tight">Severity Score Calculation</h2>
+        <p class="text-xs text-muted mt-0.5">Transparent community severity score based on Spec Section 8 formula.</p>
+      </div>
+      <div class="text-right">
+        <span
+          class="inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-bold"
+          :class="{
+            'sr-severity-high': severityBand === 'high',
+            'sr-severity-medium': severityBand === 'medium',
+            'sr-severity-low': severityBand === 'low'
+          }"
+        >
+          <span
+            class="h-2 w-2 rounded-full shrink-0"
+            :class="{
+              'sr-severity-high-dot': severityBand === 'high',
+              'sr-severity-medium-dot': severityBand === 'medium',
+              'sr-severity-low-dot': severityBand === 'low'
+            }"
+          ></span>
+          <span x-text="severityBandLabel"></span> &middot; <span x-text="severityScore">{{ breakdown.score }}</span>/100
+        </span>
+      </div>
+    </div>
+
+    <div class="divide-y divide-border text-xs sm:text-sm">
+      {# 1. Base Weight #}
+      <div class="sr-breakdown-row">
+        <div>
+          <span class="font-semibold text-ink">Category Base Weight</span>
+          <span class="text-muted block text-xs">Based on hazard severity ({{ report.category | replace('_', ' ') }})</span>
+        </div>
+        <span class="font-bold text-ink">+{{ breakdown.base_weight }}</span>
+      </div>
+
+      {# 2. Photo Evidence #}
+      <div class="sr-breakdown-row">
+        <div>
+          <span class="font-semibold text-ink">Photographic Evidence</span>
+          <span class="text-muted block text-xs">Verified clear photograph attached</span>
+        </div>
+        <span class="font-bold text-ink">
+          {% if breakdown.photo_bonus > 0 %}+{{ breakdown.photo_bonus }}{% else %}0{% endif %}
+        </span>
+      </div>
+
+      {# 3. AI Classification Confidence #}
+      <div class="sr-breakdown-row">
+        <div>
+          <span class="font-semibold text-ink">AI Vision Classification</span>
+          <span class="text-muted block text-xs">High confidence classification (> 0.7)</span>
+        </div>
+        <span class="font-bold text-ink">
+          {% if breakdown.ai_bonus > 0 %}+{{ breakdown.ai_bonus }}{% else %}0{% endif %}
+        </span>
+      </div>
+
+      {# 4. Community Confirmations #}
+      <div class="sr-breakdown-row">
+        <div>
+          <span class="font-semibold text-ink">Community Confirmations</span>
+          <span class="text-muted block text-xs">+8 per confirmation (capped at +24)</span>
+        </div>
+        <span class="font-bold text-emerald-700">
+          +<span x-text="Math.min(confirmCount * 8, 24)">{{ breakdown.confirm_bonus }}</span>
+        </span>
+      </div>
+
+      {# 5. Community Disputes #}
+      <div class="sr-breakdown-row">
+        <div>
+          <span class="font-semibold text-ink">Community Disputes</span>
+          <span class="text-muted block text-xs">-10 per dispute penalty</span>
+        </div>
+        <span class="font-bold text-red-600">
+          <span x-text="disputeCount * -10">{{ breakdown.dispute_penalty }}</span>
+        </span>
+      </div>
+
+      {# 6. Recency Factor #}
+      <div class="sr-breakdown-row">
+        <div>
+          <span class="font-semibold text-ink">Report Recency</span>
+          <span class="text-muted block text-xs">&le;7 days (+10), 8&ndash;30 days (+5), &gt;30 days (0)</span>
+        </div>
+        <span class="font-bold text-ink">+{{ breakdown.recency_bonus }}</span>
+      </div>
+
+      {# Total Clamped Score #}
+      <div class="sr-breakdown-row font-bold text-sm sm:text-base pt-3 border-t-2 border-border">
+        <span class="text-primary-dark">Final Clamped Score (0&ndash;100)</span>
+        <span class="text-primary-dark"><span x-text="severityScore">{{ breakdown.score }}</span> / 100</span>
+      </div>
+    </div>
+  </section>
+
+  {# Community Verification (Voting) Panel #}
+  <section class="rounded-card border border-border bg-surface p-5 sm:p-6 shadow-card space-y-4">
+    <div>
+      <h2 class="text-lg font-bold text-primary-dark tracking-tight">Community Verification</h2>
+      <p class="text-xs text-muted mt-0.5">Help keep road data accurate. Confirm if this hazard is active, dispute if inaccurate, or verify repair.</p>
+    </div>
+
+    {# Live Counters #}
+    <div class="grid grid-cols-3 gap-3 text-center">
+      <div class="rounded-xl border border-emerald-200 bg-emerald-50/50 p-3">
+        <p class="text-xs font-semibold text-emerald-800">Still Here</p>
+        <p id="sr-confirm-count" class="text-xl sm:text-2xl font-black text-emerald-900 mt-0.5" x-text="confirmCount">{{ report.confirm_count }}</p>
+        <p class="text-[10px] text-emerald-700">Confirmations</p>
+      </div>
+      <div class="rounded-xl border border-red-200 bg-red-50/50 p-3">
+        <p class="text-xs font-semibold text-red-800">Not A Hazard</p>
+        <p id="sr-dispute-count" class="text-xl sm:text-2xl font-black text-red-900 mt-0.5" x-text="disputeCount">{{ report.dispute_count }}</p>
+        <p class="text-[10px] text-red-700">Disputes</p>
+      </div>
+      <div class="rounded-xl border border-blue-200 bg-blue-50/50 p-3">
+        <p class="text-xs font-semibold text-blue-800">Fixed Votes</p>
+        <p id="sr-fixed-count" class="text-xl sm:text-2xl font-black text-blue-900 mt-0.5" x-text="fixedCount">{{ report.fixed_count }}</p>
+        <p class="text-[10px] text-blue-700">2 needed to resolve</p>
+      </div>
+    </div>
+
+    {# Voting Action Buttons #}
+    {% if is_own_report %}
+      <div class="rounded-xl border border-border bg-canvas p-4 text-center text-xs sm:text-sm text-muted">
+        <p class="font-semibold text-ink">You submitted this report.</p>
+        <p class="mt-0.5">Peer verification is reserved for other citizens to maintain integrity.</p>
+      </div>
+    {% else %}
+      <div class="space-y-3 pt-2">
+        <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+          {# 1. Confirm #}
+          <button
+            id="sr-confirm-btn"
+            type="button"
+            @click="castVote('confirm')"
+            :disabled="voteSubmitting || isFixed"
+            class="flex-1 inline-flex items-center justify-center gap-2 rounded-full px-4 py-2.5 text-xs sm:text-sm font-bold bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm min-h-[44px]"
+          >
+            <svg class="h-4 w-4 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+              <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
+            </svg>
+            <span>Confirm &ndash; Still Here</span>
+          </button>
+
+          {# 2. Dispute #}
+          <button
+            id="sr-dispute-btn"
+            type="button"
+            @click="castVote('dispute')"
+            :disabled="voteSubmitting || isFixed"
+            class="flex-1 inline-flex items-center justify-center gap-2 rounded-full px-4 py-2.5 text-xs sm:text-sm font-bold bg-white text-red-700 border border-red-300 hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors min-h-[44px]"
+          >
+            <svg class="h-4 w-4 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+              <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" />
+            </svg>
+            <span>Dispute &ndash; Not A Hazard</span>
+          </button>
+
+          {# 3. Mark Fixed #}
+          <button
+            id="sr-fixed-btn"
+            type="button"
+            @click="openFixedModal()"
+            :disabled="voteSubmitting || isFixed"
+            class="flex-1 inline-flex items-center justify-center gap-2 rounded-full px-4 py-2.5 text-xs sm:text-sm font-bold bg-primary text-white hover:bg-primary-dark disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm min-h-[44px]"
+          >
+            <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path>
+            </svg>
+            <span>Mark Fixed</span>
+          </button>
+        </div>
+
+        {# Alerts / Feedback Messages #}
+        <template x-if="voteSuccessMessage">
+          <div role="status" class="rounded-xl border border-emerald-300 bg-emerald-50 p-3 text-xs sm:text-sm text-emerald-900 flex items-center gap-2">
+            <svg class="h-4 w-4 text-emerald-600 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+              <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
+            </svg>
+            <span x-text="voteSuccessMessage"></span>
+          </div>
+        </template>
+
+        <template x-if="voteErrorMessage">
+          <div role="alert" class="rounded-xl border border-red-300 bg-red-50 p-3 text-xs sm:text-sm text-red-900 flex items-center gap-2">
+            <svg class="h-4 w-4 text-red-600 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+              <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
+            </svg>
+            <span x-text="voteErrorMessage"></span>
+          </div>
+        </template>
+      </div>
+    {% endif %}
+  </section>
+
+  {# Optional After-Photo Modal on Mark Fixed #}
+  <div
+    id="sr-fixed-modal"
+    x-show="showFixedModal"
+    x-cloak
+    class="fixed inset-0 z-50 flex items-center justify-center p-4 sr-modal-backdrop"
+    @keydown.escape.window="closeFixedModal()"
+  >
+    <div
+      class="w-full max-w-md rounded-card border border-border bg-surface p-6 shadow-2xl space-y-4"
+      @click.away="closeFixedModal()"
+    >
+      <div class="flex items-center justify-between">
+        <h3 class="text-lg font-bold text-primary-dark">Mark Hazard as Fixed</h3>
+        <button
+          type="button"
+          @click="closeFixedModal()"
+          class="text-muted hover:text-ink text-sm p-1 rounded-full"
+          aria-label="Close modal"
+        >
+          <svg class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" />
+          </svg>
+        </button>
+      </div>
+
+      <p class="text-xs sm:text-sm text-muted">
+        Confirm that road authorities or community members have resolved this hazard. At 2 distinct fixed votes, the hazard will be marked resolved.
+      </p>
+
+      {# Optional After-Photo Picker #}
+      <div class="space-y-2">
+        <label for="sr-after-photo-input" class="block text-xs font-bold text-ink uppercase tracking-wide">
+          Optional After-Repair Photo
+        </label>
+        <input
+          id="sr-after-photo-input"
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+          @change="handleAfterPhotoSelect($event)"
+          class="block w-full text-xs text-muted file:mr-3 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-primary-soft file:text-primary-dark hover:file:bg-primary/20 cursor-pointer"
+        >
+
+        <template x-if="afterPhotoPreview">
+          <div class="relative mt-2 rounded-xl overflow-hidden border border-border">
+            <img :src="afterPhotoPreview" alt="After-repair preview" class="w-full h-36 object-cover">
+            <button
+              type="button"
+              @click="clearAfterPhoto()"
+              class="absolute top-2 right-2 bg-red-600 text-white rounded-full p-1 text-xs hover:bg-red-700 shadow"
+              aria-label="Remove photo"
+            >
+              <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" />
+              </svg>
+            </button>
+          </div>
+        </template>
+
+        <template x-if="afterPhotoError">
+          <p class="text-xs text-red-600 font-semibold" x-text="afterPhotoError"></p>
+        </template>
+      </div>
+
+      <div class="flex items-center justify-end gap-3 pt-3 border-t border-border">
+        <button
+          id="sr-cancel-fixed-btn"
+          type="button"
+          @click="closeFixedModal()"
+          class="rounded-full px-4 py-2 text-xs font-semibold text-muted hover:text-ink"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          @click="submitFixedVote()"
+          :disabled="voteSubmitting"
+          class="rounded-full px-5 py-2.5 text-xs font-bold bg-primary text-white hover:bg-primary-dark disabled:opacity-50 transition-colors shadow-sm"
+        >
+          <span x-show="!voteSubmitting">Submit Fixed Vote</span>
+          <span x-show="voteSubmitting">Submitting...</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  {# Status Timeline Card #}
+  <section class="rounded-card border border-border bg-surface p-5 sm:p-6 shadow-card space-y-4">
+    <h2 class="text-lg font-bold text-primary-dark tracking-tight">Status Timeline</h2>
+
+    <div class="relative pl-6 space-y-6 before:absolute before:left-2 before:top-2 before:bottom-2 before:w-0.5 before:bg-border">
+      {# 1. Creation #}
+      <div class="relative space-y-1">
+        <div class="absolute -left-6 top-1.5 sr-timeline-marker"></div>
+        <p class="text-xs sm:text-sm font-bold text-ink">Hazard Reported</p>
+        <p class="text-xs text-muted" x-text="formatDate({{ report.created_at | tojson }})">
+          {{ report.created_at }}
+        </p>
+      </div>
+
+      {# 2. Escalated (if applicable) #}
+      <template x-if="escalatedAt || isEscalated">
+        <div class="relative space-y-1">
+          <div class="absolute -left-6 top-1.5 sr-timeline-marker bg-amber-500"></div>
+          <p class="text-xs sm:text-sm font-bold text-amber-900">Escalated to Municipal Authority</p>
+          <p class="text-xs text-muted" x-text="formatDate(escalatedAt || {{ report.updated_at | tojson }})"></p>
+        </div>
+      </template>
+
+      {# 3. Status History Events from DB (if any) #}
+      {% for sh in status_history %}
+        <div class="relative space-y-1">
+          <div class="absolute -left-6 top-1.5 sr-timeline-marker"></div>
+          <p class="text-xs sm:text-sm font-semibold text-ink">
+            Status changed: {{ sh.old_status or 'open' }} &rarr; {{ sh.new_status }}
+          </p>
+          <p class="text-xs text-muted" x-text="formatDate({{ sh.created_at | tojson }})">
+            {{ sh.created_at }}
+          </p>
+        </div>
+      {% endfor %}
+
+      {# 4. Fixed Transition (if applicable) #}
+      <template x-if="fixedAt || isFixed">
+        <div class="relative space-y-1">
+          <div class="absolute -left-6 top-1.5 sr-timeline-marker bg-emerald-600"></div>
+          <p class="text-xs sm:text-sm font-bold text-emerald-800">Marked as Fixed</p>
+          <p class="text-xs text-muted" x-text="formatDate(fixedAt || {{ report.updated_at | tojson }})"></p>
+        </div>
+      </template>
+    </div>
+  </section>
+
+  {# Comments Thread & Submission Form #}
+  <section class="rounded-card border border-border bg-surface p-5 sm:p-6 shadow-card space-y-4">
+    <div class="flex items-center justify-between">
+      <h2 class="text-lg font-bold text-primary-dark tracking-tight">Community Discussion</h2>
+      <span class="text-xs text-muted font-medium">
+        <span x-text="comments.length">{{ comments | length }}</span> comments
+      </span>
+    </div>
+
+    {# Comments List #}
+    <div class="space-y-3 pt-2">
+      <template x-if="comments.length === 0">
+        <div class="rounded-xl border border-dashed border-border bg-canvas p-6 text-center text-xs sm:text-sm text-muted">
+          No comments yet. Share an update or local observation.
+        </div>
+      </template>
+
+      <div id="sr-comments-list" class="space-y-3">
+        <template x-for="comment in comments" :key="comment.id">
+          <div class="rounded-xl border border-border bg-canvas p-4 space-y-1.5">
+            <div class="flex items-center justify-between text-xs">
+              <span class="font-bold text-ink" x-text="comment.author_name"></span>
+              <span class="text-muted" x-text="formatDate(comment.created_at)"></span>
+            </div>
+            <p class="text-xs sm:text-sm text-ink whitespace-pre-line" x-text="comment.body"></p>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    {# Comment Form #}
+    <form
+      id="sr-comment-form"
+      class="pt-4 border-t border-border space-y-3"
+      @submit.prevent="submitComment()"
+    >
+      <label for="sr-new-comment-input" class="block text-xs font-bold text-ink uppercase tracking-wide">
+        Add a Comment
+      </label>
+      <textarea
+        id="sr-new-comment-input"
+        x-model="newCommentText"
+        rows="3"
+        maxlength="1000"
+        placeholder="Provide observations, repair updates, or local context..."
+        class="block w-full rounded-xl border border-border bg-surface p-3 text-xs sm:text-sm text-ink placeholder:text-muted focus:border-primary focus:ring-2 focus:ring-primary/20 focus:outline-none transition-colors resize-y"
+        :disabled="commentSubmitting"
+      ></textarea>
+
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <label class="inline-flex items-center gap-2 text-xs text-muted cursor-pointer select-none">
+          <input
+            id="sr-comment-anon-toggle"
+            type="checkbox"
+            x-model="newCommentHideName"
+            class="rounded border-border text-primary focus:ring-primary/20"
+          >
+          <span>Hide my name (post as "Community Member")</span>
+        </label>
+
+        <button
+          id="sr-comment-submit-btn"
+          type="submit"
+          :disabled="commentSubmitting || !newCommentText.trim()"
+          class="inline-flex items-center justify-center rounded-full px-5 py-2 text-xs font-bold bg-primary text-white hover:bg-primary-dark disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm min-h-[38px]"
+        >
+          <span x-show="!commentSubmitting">Post Comment</span>
+          <span x-show="commentSubmitting">Posting...</span>
+        </button>
+      </div>
+
+      <template x-if="commentErrorMessage">
+        <p role="alert" class="text-xs text-red-600 font-semibold" x-text="commentErrorMessage"></p>
+      </template>
+
+      <template x-if="commentSuccessMessage">
+        <p role="status" class="text-xs text-emerald-700 font-semibold" x-text="commentSuccessMessage"></p>
+      </template>
+    </form>
+  </section>
+</div>
+{% endblock %}

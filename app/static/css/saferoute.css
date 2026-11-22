@@ -411,6 +411,43 @@ body {
   backdrop-filter: blur(4px);
 }
 
+/* Report Detail & Verification Page (Issue #24 — B6) */
+.sr-gallery-thumb {
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border-radius: var(--sr-radius-card);
+  border: 1px solid var(--sr-border);
+  background-color: var(--sr-canvas);
+  transition: transform 150ms ease, box-shadow 150ms ease;
+}
+
+.sr-gallery-thumb:hover {
+  transform: scale(1.02);
+  box-shadow: var(--sr-shadow-card);
+}
+
+.sr-breakdown-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.625rem 0;
+  border-bottom: 1px solid var(--sr-border);
+  font-size: 0.875rem;
+}
+
+.sr-breakdown-row:last-child {
+  border-bottom: none;
+}
+
+.sr-timeline-marker {
+  width: 10px;
+  height: 10px;
+  border-radius: 9999px;
+  background-color: var(--sr-primary);
+  border: 2px solid var(--sr-surface);
+  box-shadow: 0 0 0 2px var(--sr-primary-soft);
+}
+
 /* Respect user reduced-motion preferences */
 @media (prefers-reduced-motion: reduce) {
   *,

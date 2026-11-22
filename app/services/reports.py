@@ -5,6 +5,7 @@ user's RLS context via create_authenticated_supabase_client(). The service-role
 key is never used here.
 """
 
+from datetime import datetime, timezone
 import logging
 import math
 import re
@@ -120,6 +121,80 @@ def severity_band(score: int) -> Literal["low", "medium", "high"]:
     if score >= 40:
         return "medium"
     return "low"
+
+
+def compute_severity_breakdown(
+    *,
+    category: str,
+    created_at_str: str,
+    confirm_count: int,
+    dispute_count: int,
+    has_photo: bool,
+    ai_confidence: Optional[float] = None,
+) -> dict[str, Any]:
+    """Calculate the transparent Spec Section 8 severity formula components.
+
+    Formula:
+        severity_score = type_weight + evidence + verification + recency
+        Clamped between 0 and 100.
+    """
+    weights = {
+        "pothole": 40,
+        "road_break": 40,
+        "footpath": 35,
+        "streetlight": 25,
+        "other": 15,
+    }
+    cat_norm = (category or "").strip().lower()
+    base_weight = weights.get(cat_norm, 15)
+
+    photo_bonus = 10 if has_photo else 0
+    ai_bonus = 10 if (ai_confidence is not None and ai_confidence > 0.7) else 0
+
+    confirm_bonus = min(max(confirm_count, 0) * 8, 24)
+    dispute_penalty = max(dispute_count, 0) * -10
+
+    age_days = 0
+    if created_at_str:
+        try:
+            created_dt = datetime.fromisoformat(created_at_str.replace("Z", "+00:00"))
+            age_days = max(0, (datetime.now(timezone.utc) - created_dt).days)
+        except Exception:
+            age_days = 0
+
+    if age_days <= 7:
+        recency_bonus = 10
+    elif age_days <= 30:
+        recency_bonus = 5
+    else:
+        recency_bonus = 0
+
+    raw_score = base_weight + photo_bonus + ai_bonus + confirm_bonus + dispute_penalty + recency_bonus
+    clamped_score = max(0, min(100, raw_score))
+
+    band = severity_band(clamped_score)
+    color_map = {
+        "low": "#2E9E5B",
+        "medium": "#F5A524",
+        "high": "#D92D20",
+    }
+
+    return {
+        "category": cat_norm,
+        "base_weight": base_weight,
+        "photo_bonus": photo_bonus,
+        "ai_bonus": ai_bonus,
+        "confirm_bonus": confirm_bonus,
+        "dispute_penalty": dispute_penalty,
+        "age_days": age_days,
+        "recency_bonus": recency_bonus,
+        "raw_score": raw_score,
+        "score": clamped_score,
+        "severity_band": band,
+        "band_label": band.capitalize(),
+        "color": color_map[band],
+        "is_stale": age_days > 30,
+    }
 
 
 def _extract_data(resp: Any) -> Any:

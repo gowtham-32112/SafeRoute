@@ -50,11 +50,14 @@ from app.services.realtime import stream_hazard_updates
 from app.services.reports import (
     BoundsReportsResponse,
     ReportDetailResponse,
+    _extract_data,
+    compute_severity_breakdown,
     create_hazard_report,
     get_report_by_id,
     get_reports_in_bounds,
 )
 from app.services.session import issue_csrf_cookie
+from app.services.supabase_client import create_authenticated_supabase_client
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
@@ -355,20 +358,84 @@ async def new_report_page(
 
 @router.get(
     "/reports/{report_id}",
-    response_model=ReportDetailResponse,
-    summary="Retrieve Authorized Hazard Report Details",
+    response_model=None,
+    summary="Retrieve Authorized Hazard Report Details or Page",
 )
 async def read_hazard_report(
     report_id: str,
+    request: Request,
+    response: Response,
     ctx: AuthenticatedContext = Depends(get_authenticated_context),
     app_settings: Settings = Depends(get_settings),
-) -> ReportDetailResponse:
-    """Return hazard report details and linked images under the user's RLS context."""
-    return get_report_by_id(
+) -> Union[ReportDetailResponse, Response]:
+    """Return hazard report details as JSON (for API/map) or render report_detail.html."""
+    report = get_report_by_id(
         report_id=report_id,
         access_token=ctx.access_token,
         app_settings=app_settings,
     )
+
+    accept = request.headers.get("accept", "").lower()
+    wants_html = "text/html" in accept
+
+    if not wants_html:
+        return report
+
+    # Browser HTML view
+    csrf_token, csrf_carrier = _prepare_page_csrf(request, app_settings)
+    comments_resp = list_report_comments(
+        report_id=report_id,
+        access_token=ctx.access_token,
+        app_settings=app_settings,
+    )
+
+    # Fetch status history under user RLS if available
+    status_history: list[dict[str, Any]] = []
+    try:
+        client = create_authenticated_supabase_client(ctx.access_token, app_settings)
+        history_resp = (
+            client.table("status_history")
+            .select("id, old_status, new_status, changed_by, created_at")
+            .eq("report_id", report.id)
+            .order("created_at")
+            .execute()
+        )
+        raw_history = _extract_data(history_resp)
+        if isinstance(raw_history, list):
+            status_history = raw_history
+    except Exception:
+        status_history = []
+
+    # Compute severity breakdown
+    has_photo = any(img.kind == "evidence" for img in report.images) or len(report.images) > 0
+    breakdown = compute_severity_breakdown(
+        category=report.category,
+        created_at_str=report.created_at,
+        confirm_count=report.confirm_count,
+        dispute_count=report.dispute_count,
+        has_photo=has_photo,
+        ai_confidence=None,
+    )
+
+    is_own_report = bool(report.reporter_id and str(report.reporter_id) == str(ctx.user.id))
+
+    template_resp = templates.TemplateResponse(
+        request=request,
+        name="report_detail.html",
+        context={
+            "current_user": ctx.user,
+            "active_nav": "map",
+            "csrf_token": csrf_token,
+            "report": report,
+            "is_own_report": is_own_report,
+            "breakdown": breakdown,
+            "comments": comments_resp.comments,
+            "status_history": status_history,
+        },
+    )
+    _copy_set_cookie_headers(response, template_resp)
+    _copy_set_cookie_headers(csrf_carrier, template_resp)
+    return template_resp
 
 
 @router.post(
