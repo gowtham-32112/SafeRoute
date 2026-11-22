@@ -8,8 +8,11 @@ Implements:
 """
 
 from datetime import datetime, timezone
+import logging
 from typing import Any, Literal, Optional
 import uuid
+
+logger = logging.getLogger(__name__)
 
 from pydantic import BaseModel, Field
 
@@ -134,20 +137,25 @@ def get_admin_escalations_dashboard(
     client = create_authenticated_supabase_client(access_token, app_settings)
 
     # 1. Query candidate reports (status='open')
-    resp = (
-        client.table("hazard_reports")
-        .select(
-            "id, reporter_id, category, description, location, address_text, status, "
-            "escalation_recommended, severity_score, confidence, confirm_count, dispute_count, "
-            "fixed_count, created_at, escalated_at, report_images(id, kind, signed_url)"
+    raw_reports: list[dict[str, Any]] = []
+    try:
+        resp = (
+            client.table("hazard_reports")
+            .select(
+                "id, reporter_id, category, description, location, address_text, status, "
+                "escalation_recommended, severity_score, confidence, confirm_count, dispute_count, "
+                "fixed_count, created_at, escalated_at, report_images(id, kind, signed_url)"
+            )
+            .eq("status", "open")
+            .order("severity_score", desc=True)
+            .order("created_at", desc=True)
+            .execute()
         )
-        .eq("status", "open")
-        .order("severity_score", desc=True)
-        .order("created_at", desc=True)
-        .execute()
-    )
-    raw_reports = _extract_data(resp) or []
-    if not isinstance(raw_reports, list):
+        extracted = _extract_data(resp)
+        if isinstance(extracted, list):
+            raw_reports = extracted
+    except Exception as exc:
+        logger.warning(f"Failed to fetch candidate reports: {exc}")
         raw_reports = []
 
     candidates: list[EscalationCandidateReport] = []

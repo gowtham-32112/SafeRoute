@@ -2,24 +2,25 @@
 
 **AI-powered Community Road-Hazard Awareness Platform**
 
-SafeRoute is a collaborative web platform where citizens report and verify road hazards—such as potholes, road breaks, non-functional streetlights, and blocked walkways—on a live interactive map. The system employs visual AI to suggest hazard categories from uploaded photos, calculates dynamic community severity scores, flags unaddressed critical hazards for municipal escalation, and empowers commuters to plan safer routes that account for active road hazards.
+SafeRoute is a collaborative civic web platform where citizens report and verify road hazards—such as potholes, road breaks, non-functional streetlights, and blocked walkways—on an interactive live map. The system employs visual AI to suggest hazard categories from uploaded photos, calculates dynamic community severity scores, flags unaddressed critical hazards for municipal escalation, and empowers commuters to plan safer routes that account for active road hazards.
 
 > **Important Civic Disclaimer**: SafeRoute is an informational awareness tool. It does not repair road infrastructure or guarantee route safety. The absence of reported hazards in an area does not guarantee that the roadway is hazard-free.
 
 ---
 
-## 1. Project Objectives
+## 1. Project Objectives & Core Features
 
-1. **Crowdsourced Hazard Reporting**: Allow registered citizens to pinpoint hazards with photos, categories, and descriptions.
-2. **Community Verification**: Enable peer verification (confirm, dispute, or vote fixed) to maintain high data integrity.
-3. **AI-Assisted Classification**: Use multimodal vision AI to analyze photos and recommend accurate hazard categories.
-4. **Hazard-Aware Route Planning**: Integrate with OSRM to score and suggest routes based on real-time hazard severity.
-5. **Municipal Awareness**: Automatically identify and flag severe or highly verified hazards for administrative escalation.
-6. **Civic Safety Analytics**: Surface regional hazard hotspots, category distributions, and community resolution metrics.
+1. **Crowdsourced Hazard Reporting (`/reports/new`)**: Pinpoint hazards on Leaflet maps with client-side EXIF stripping, multi-category selection, duplicate detection prompts within 30m, and automatic location reverse-geocoding.
+2. **AI-Assisted Classification (`POST /reports/suggest-category`)**: Fast multimodal vision AI analyzes uploaded road photos and recommends categories (`pothole`, `road_break`, `streetlight`, `footpath`, `other`) with confidence ratings and fallback safety.
+3. **Interactive Map & Live Updates (`/map`)**: Real-time Leaflet visualization with marker clustering, category and status filter chips, and Supabase Realtime synchronization.
+4. **Community Verification & Voting (`/reports/{id}`)**: Peer verification (`confirm`, `dispute`, `vote fixed`), civic comments, severity evolution, and the automatic 2-vote fixed resolution rule.
+5. **Hazard-Aware Route Planning (`/routes`)**: OSRM routing integration intersecting known road hazards within a 25-metre buffer, computing hazard-weighted route risk scores and recommending the safest travel corridors.
+6. **Civic Safety Analytics (`/analytics`)**: Regional hazard hotspots, interactive Leaflet heatmaps, top 5 affected zones, category/status charts, and an "Exclude seed data" toggle.
+7. **Municipal Escalation Management (`/admin/escalations`)**: Administrative dashboard allowing civic authorities to prioritize and escalate critical hazards to municipal bodies (GHMC, HMDA, TSSPDCL).
 
 ---
 
-## 2. Locked Technology Stack
+## 2. Technology Stack
 
 SafeRoute is built with a strictly locked, modern, lightweight stack:
 
@@ -33,24 +34,25 @@ SafeRoute is built with a strictly locked, modern, lightweight stack:
 | **Authentication** | Supabase Auth | Email & password session management with secure cookies |
 | **Storage** | Supabase Storage | Authenticated storage bucket (`hazard-photos`) with EXIF stripping |
 | **Realtime** | Supabase Realtime | Live map marker updates on hazard inserts and status changes |
-| **Interactive Maps** | Leaflet.js + OpenStreetMap | Smooth client-side mapping, marker clustering, and bounds filtering |
+| **Interactive Maps** | Leaflet.js + Leaflet.heat | Smooth client-side mapping, marker clustering, and heatmaps |
+| **Charts** | Chart.js | Accessible responsive data visualizations for civic analytics |
 | **Routing Engine** | OSRM API | Open Source Routing Machine with custom safety penalty weighting |
 
 ---
 
-## 3. Architecture Overview
+## 3. Architecture & Data Flow
 
 ```
                       +---------------------------------------+
-                      |       Client Browser (Desktop/Mobile)  |
-                      |  HTML5 + HTMX + Alpine.js + Leaflet   |
+                      |       Client Browser (Desktop/Mobile) |
+                      |   HTML5 + Alpine.js + Leaflet + HTMX  |
                       +-------------------+-------------------+
                                           | HTTP / WebSockets
                                           v
                       +---------------------------------------+
                       |           FastAPI Gateway             |
-                      |   - Jinja2 Template Responses         |
-                      |   - HTMX Partial Fragment Endpoints   |
+                      |   - Jinja2 Template Views             |
+                      |   - Double-Submit CSRF Protection     |
                       |   - REST API & Health Check           |
                       +-------+-----------------------+-------+
                               |                       |
@@ -67,76 +69,19 @@ SafeRoute is built with a strictly locked, modern, lightweight stack:
 
 ---
 
-## 4. Project Directory Structure
+## 4. Supabase Database Setup & Migration Order
 
-```
-saferoute/
-├── AGENTS.md                 # Antigravity AI engineering instructions & rules
-├── README.md                 # Project documentation and setup guide
-├── requirements.txt          # Python application dependencies
-├── .env.example              # Environment configuration template
-├── .gitignore                # Git exclusions for secrets, cache, and logs
-│
-├── docs/
-│   └── SPEC.md               # Complete approved Final Build Spec v2
-│
-├── app/
-│   ├── __init__.py           # Application package marker
-│   ├── main.py               # FastAPI application entrypoint & health routes
-│   ├── config.py             # Settings, environment parser & geo defaults
-│   ├── deps.py               # FastAPI dependency injection providers
-│   │
-│   ├── routers/              # Modular route handlers (Stage 2+)
-│   │   └── __init__.py
-│   │
-│   ├── services/             # Core business logic services (Stage 2+)
-│   │   └── __init__.py
-│   │
-│   ├── templates/            # Jinja2 HTML templates
-│   │
-│   └── static/               # Client-side static assets
-│       ├── css/              # Custom stylesheets
-│       ├── js/               # Client scripts & Leaflet integrations
-│       └── img/              # Branding and icons
-│
-├── supabase/                 # Database migrations and seed scripts
-│   ├── schema.sql            # Table definitions, PostGIS extension & indexes
-│   ├── functions.sql         # Spatial bounds and proximity SQL functions
-│   ├── triggers.sql          # Auto-scoring, fixed rule & audit triggers
-│   ├── policies.sql          # Row Level Security (RLS) policies
-│   └── seed.sql              # Demo data around Kukatpally Y Junction
-│
-└── tests/                    # Test suite
-    ├── __init__.py
-    └── test_health.py        # Health and basic endpoint tests
-```
+To initialize the PostgreSQL + PostGIS database in Supabase (or any standard PostgreSQL instance), execute the SQL scripts located in `supabase/` strictly in the following sequence:
+
+1. **`supabase/schema.sql`**: Activates PostGIS extension, creates core tables (`profiles`, `hazard_reports`, `report_images`, `verifications`, `comments`, `escalations`, `status_history`), constraints, spatial GIST indexes, and the auth user signup trigger.
+2. **`supabase/functions.sql`**: Deploys spatial query RPC functions (`reports_in_bounds`, `hazards_near_route`, `check_nearby_reports`).
+3. **`supabase/triggers.sql`**: Deploys automated scoring logic, role escalation guards, self-vote prevention, status history logging, and the 2-vote fixed threshold trigger.
+4. **`supabase/policies.sql`**: Enables and enforces Row-Level Security (RLS) on all tables and Storage bucket access rules.
+5. **`supabase/seed.sql`**: Seeds deterministic demo accounts (admin and citizens), 20 realistic Kukatpally corridor hazard reports (`is_seed = true`), photos, verifications, comments, and municipal escalations.
 
 ---
 
-## 5. Design Tokens
-
-| Token Name | Hex Code | Purpose |
-|---|---|---|
-| `primary` | `#106EBE` | Action buttons, active navigation, links, header bar |
-| `primary-dark` | `#0B4F8A` | Button hover states, headings on light surfaces |
-| `primary-soft` | `#E6F1FA` | Tinted background containers, active filter chips |
-| `accent` (mint) | `#0FFCBE` | Highlights on dark blue surfaces, focus rings (*Never text on white*) |
-| `ink` | `#0F2A43` | Primary typography and high-contrast text |
-| `muted` | `#5B6B7C` | Secondary text, timestamps, helper labels |
-| `surface` | `#FFFFFF` | Card containers, modals, popovers |
-| `canvas` | `#F6FAFD` | Global page body background |
-| `border` | `#D9E4EE` | Subtle borders, table dividers |
-
-### Severity Indicators (Always accompany with descriptive text)
-- **Low Severity**: `#2E9E5B` (Green)
-- **Medium Severity**: `#F5A524` (Amber)
-- **High Severity**: `#D92D20` (Red)
-
-**Typography**: Plus Jakarta Sans (Weights: 400 Regular, 500 Medium, 600 SemiBold, 700 Bold, 800 ExtraBold).
-
----
-
-## 6. Installation & Local Setup
+## 5. Installation & Local Setup
 
 ### Prerequisites
 - Python 3.11+
@@ -144,8 +89,8 @@ saferoute/
 
 ### 1. Clone & Navigate to Repository
 ```bash
-git clone <repository-url>
-cd saferoute
+git clone https://github.com/gowtham-32112/SafeRoute.git
+cd SafeRoute
 ```
 
 ### 2. Create and Activate Virtual Environment
@@ -167,91 +112,86 @@ pip install -r requirements.txt
 ```
 
 ### 4. Configure Environment Variables
-Copy the template and provide valid credentials:
+Copy the template and supply your credentials:
 ```bash
 cp .env.example .env
 ```
+
 Populate `.env` with your project parameters:
 ```env
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_ANON_KEY=your-supabase-anon-key
-SUPABASE_SERVICE_KEY=your-supabase-service-role-key
-VISION_API_KEY=your-gemini-or-vision-api-key
 SECRET_KEY=your-random-32-byte-secret-key
+VISION_API_KEY=your-gemini-or-vision-api-key
+OSRM_BASE_URL=https://router.project-osrm.org
+OSRM_TIMEOUT_SECONDS=6.0
+ROUTE_HAZARD_BUFFER_METERS=25.0
+KUKATPALLY_FALLBACK_LAT=17.4849
+KUKATPALLY_FALLBACK_LNG=78.4138
 ```
 
 ---
 
-## 7. Running the Application
+## 6. Running the Application
 
-Start the local development server with auto-reload:
+Start the local development server:
 ```bash
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-Open your browser and navigate to:
-- **Welcome Endpoint**: [http://127.0.0.1:8000/](http://127.0.0.1:8000/)
+Open your browser to:
+- **Landing Page**: [http://127.0.0.1:8000/](http://127.0.0.1:8000/)
+- **Live Map**: [http://127.0.0.1:8000/map](http://127.0.0.1:8000/map)
+- **Report Hazard**: [http://127.0.0.1:8000/reports/new](http://127.0.0.1:8000/reports/new)
+- **Route Planner**: [http://127.0.0.1:8000/routes](http://127.0.0.1:8000/routes)
+- **Analytics Dashboard**: [http://127.0.0.1:8000/analytics](http://127.0.0.1:8000/analytics)
+- **Admin Escalations**: [http://127.0.0.1:8000/admin/escalations](http://127.0.0.1:8000/admin/escalations)
 - **Health Check**: [http://127.0.0.1:8000/health](http://127.0.0.1:8000/health)
-- **Interactive OpenAPI Docs**: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
 
-### Verification with curl
-```bash
-curl http://127.0.0.1:8000/health
-```
-Expected output:
-```json
-{
-  "status": "healthy",
-  "application": "SafeRoute"
-}
-```
+### Demo Accounts (From `supabase/seed.sql`)
+| Role | Email | Password | Access |
+|---|---|---|---|
+| **Admin** | `admin@saferoute.demo` | *(Configured during seed)* | Full citizen access + `/admin/escalations` dashboard |
+| **Citizen 1** | `citizen1@saferoute.demo` | *(Configured during seed)* | Standard reporting & community voting |
+| **Citizen 2** | `citizen2@saferoute.demo` | *(Configured during seed)* | Standard reporting & community voting |
 
 ---
 
-## 8. Running Automated Tests
+## 7. Running Automated Tests
 
-Run the test suite using `pytest`:
+Run the complete test suite with `pytest`:
 ```bash
 pytest tests/ -v
 ```
 
----
-
-## 9. Team Roles & GitHub Collaboration Rules
-
-SafeRoute is developed by a three-member collaborative engineering team:
-
-| Role | Domain Ownership | Responsibilities |
-|---|---|---|
-| **Member A** | Backend & Database | Supabase setup, PostGIS schema, SQL functions/triggers, Auth, core APIs, deployment |
-| **Member B** | Frontend & UI | Base layout, design system components, map UI, report screens, responsive design |
-| **Member C** | AI, Routing & Analytics | Vision AI categorization, severity scoring engine, OSRM routing, analytics dashboard |
-
-### Team Workflow Rules
-1. **Branch Naming**: `feat/<area>-<issue-number>-short-name` (e.g., `feat/infra-S1-repo-setup`, `feat/backend-8-reports-api`).
-2. **Pull Requests Only**: Never push directly to `main`. Every change enters through a Pull Request reviewed and merged by Member A.
-3. **Issue Linking**: Include `Closes #<issue-number>` in every PR description.
-4. **Fast Merges**: Pull `main` before starting new tasks; merge working branches frequently (at least every 3 hours).
-5. **Zero Secrets**: Never commit `.env` files or API credentials to git.
+The automated test suite verifies:
+- API endpoint health & authentication guards
+- PostGIS SQL schemas, functions, and trigger logic
+- Severity calculation and confidence scaling
+- Duplicate detection & spatial clustering
+- AI category suggestions & graceful fallbacks
+- OSRM route penalty algorithms
+- Analytics KPI metrics & zero-division safety
+- Security compliance (Zero `SUPABASE_SERVICE_KEY` in runtime app, zero `dark:` classes)
 
 ---
 
-## 10. Development Roadmap
+## 8. Cloud Deployment
 
-- **Milestone 1: Core Loop (Day 1)**
-  - `S1`: Repository setup, conventions, and foundation (*Current Stage*)
-  - `A1`-`A6`: Database schema, PostGIS functions, triggers, and seed data
-  - `B1`-`B5`: Base layout, landing/auth pages, interactive map, and reporting form
-  - `A7`-`A8`: Auth guards, reports API with 30m duplicate detection
-  - `C1`: Severity scoring service and unit test suite
-  - `S2`: Day 1 Integration checkpoint
-- **Milestone 2: Smart Features & Production Delivery (Day 2)**
-  - `C2`: AI vision category suggestion with fallback
-  - `C3`: Hazard-aware route planning with OSRM scoring
-  - `C4`: Hotspot analytics and reporting metrics
-  - `A9`-`A10`: Votes/comments endpoints, admin escalation API
-  - `B6`-`B8`: Report detail view, escalations dashboard, route comparison UI
-  - `B9`: Responsive design & accessibility polish
-  - `A11`: HTTPS cloud deployment
-  - `C5`-`C6`: Field validation run, demo script, and final rehearsal
-  - `S3`: Final submission and tag `v1.0`
+### Deployment with Render
+A secret-free `render.yaml` and `Procfile` are included in the repository.
+
+1. Connect your GitHub repository to [Render](https://render.com).
+2. Create a new **Blueprint** service pointing to `render.yaml`.
+3. In the Render Dashboard, fill in the secret environment variables (`SUPABASE_URL`, `SUPABASE_ANON_KEY`, `VISION_API_KEY`).
+4. Render builds with Python 3.11.9 and runs `uvicorn app.main:app --host 0.0.0.0 --port $PORT`.
+
+---
+
+## 9. Design System & Accessibility
+
+SafeRoute follows strict accessibility and contrast standards:
+- **Palette**: `primary` (`#106EBE`), `primary-dark` (`#0B4F8A`), `accent` mint (`#0FFCBE`, dark surfaces only), `ink` (`#0F2A43`), `surface` (`#FFFFFF`).
+- **Severity Colors**: Low (`#2E9E5B`), Medium (`#F5A524`), High (`#D92D20`).
+- **Typography**: Plus Jakarta Sans.
+- **Rules**: Strictly light-mode only (`color-scheme: only light;`, 0 `dark:` classes), no mint text on light surfaces, visible keyboard focus rings, and safe DOM binding (zero `innerHTML` on user input).
