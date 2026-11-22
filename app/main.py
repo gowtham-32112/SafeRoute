@@ -22,6 +22,7 @@ from app.deps import (
 from app.routers.auth import router as auth_router
 from app.routers.reports import router as reports_router
 from app.routers.admin import router as admin_router
+from app.routers.routes import router as routes_router
 from app.services.admin import AdminServiceError
 from app.services.auth import AuthenticatedUser, AuthError
 from app.services.community import CommunityServiceError
@@ -324,6 +325,7 @@ async def handle_unexpected_exception(_request: Request, exc: Exception) -> JSON
 app.include_router(auth_router)
 app.include_router(reports_router)
 app.include_router(admin_router)
+app.include_router(routes_router)
 
 
 def _copy_set_cookie_headers(source: Response, target: Response) -> None:

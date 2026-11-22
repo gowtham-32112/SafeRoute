@@ -67,6 +67,10 @@ class Settings(BaseSettings):
     MAP_BOUNDS_DEBOUNCE_MS: int = 400
     REPORTS_BOUNDS_LIMIT: int = 500
 
+    # Routing & Navigation Configuration (OSRM)
+    OSRM_BASE_URL: str = "https://router.project-osrm.org"
+    OSRM_TIMEOUT_SECONDS: float = 6.0
+
     # Business Rules
     FIXED_VOTE_THRESHOLD: int = 2
     ESCALATION_CONFIRM_THRESHOLD: int = 5
