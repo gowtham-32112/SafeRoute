@@ -58,6 +58,10 @@ from app.services.reports import (
 )
 from app.services.session import issue_csrf_cookie
 from app.services.supabase_client import create_authenticated_supabase_client
+from app.services.vision_ai import (
+    CategorySuggestionResponse,
+    suggest_hazard_category,
+)
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
@@ -317,6 +321,54 @@ async def confirm_duplicate_report(
         category=payload.category,
         user_id=ctx.user.id,
         access_token=ctx.access_token,
+        app_settings=app_settings,
+    )
+
+
+@router.post(
+    "/reports/suggest-category",
+    response_model=CategorySuggestionResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Suggest Hazard Category from Uploaded Evidence Photograph via Vision AI",
+)
+async def suggest_category_endpoint(
+    request: Request,
+    ctx: AuthenticatedContext = Depends(get_authenticated_context),
+    _csrf: None = Depends(require_csrf),
+    app_settings: Settings = Depends(get_settings),
+) -> CategorySuggestionResponse:
+    """Analyze an uploaded evidence image and return a suggested hazard category.
+
+    Enforces 5 MB file size limit and JPEG/PNG/WebP format.
+    Strips EXIF/GPS metadata prior to upstream AI transmission.
+    Returns category: null gracefully on unconfigured API key, timeout, or failure.
+    """
+    content_type = request.headers.get("content-type", "").lower()
+    if "multipart/form-data" not in content_type:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Content-Type must be multipart/form-data.",
+        )
+
+    form = await request.form()
+    try:
+        raw_image = form.get("image")
+        if not isinstance(raw_image, StarletteUploadFile) or not raw_image.filename:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="An evidence photograph ('image') is required.",
+            )
+
+        raw_bytes = await raw_image.read(MAX_IMAGE_SIZE_BYTES + 1)
+        if len(raw_bytes) > MAX_IMAGE_SIZE_BYTES:
+            raise ImageTooLargeError()
+        image_content_type = raw_image.content_type
+    finally:
+        await form.close()
+
+    return await suggest_hazard_category(
+        image_bytes=raw_bytes,
+        declared_content_type=image_content_type,
         app_settings=app_settings,
     )
 
