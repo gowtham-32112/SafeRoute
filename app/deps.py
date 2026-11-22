@@ -192,6 +192,22 @@ async def require_admin(
     return current_user
 
 
+async def require_admin_context(
+    ctx: AuthenticatedContext = Depends(get_authenticated_context),
+) -> AuthenticatedContext:
+    """Require an authenticated user whose trusted public.profiles.role is 'admin'.
+
+    Returns the full AuthenticatedContext (with active access token) for admin operations.
+    Rejects authenticated non-admin users with HTTP 403 Forbidden.
+    """
+    if not ctx.user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Administrator privileges required.",
+        )
+    return ctx
+
+
 async def _extract_form_csrf_token(request: Request) -> Optional[str]:
     """Read csrf_token from URL-encoded or multipart form payloads if needed."""
     # Skip parsing form/multipart bodies when the caller already sent X-CSRF-Token.

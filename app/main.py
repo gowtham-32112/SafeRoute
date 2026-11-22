@@ -21,6 +21,8 @@ from app.deps import (
 )
 from app.routers.auth import router as auth_router
 from app.routers.reports import router as reports_router
+from app.routers.admin import router as admin_router
+from app.services.admin import AdminServiceError
 from app.services.auth import AuthenticatedUser, AuthError
 from app.services.community import CommunityServiceError
 from app.services.duplicates import DuplicateServiceError
@@ -265,6 +267,18 @@ async def handle_report_service_error(
     )
 
 
+@app.exception_handler(AdminServiceError)
+async def handle_admin_service_error(
+    _request: Request,
+    exc: AdminServiceError,
+) -> JSONResponse:
+    """Return clean JSON errors for admin operations."""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.user_message},
+    )
+
+
 @app.exception_handler(SupabaseConfigError)
 async def handle_supabase_config_error(
     _request: Request,
@@ -309,6 +323,7 @@ async def handle_unexpected_exception(_request: Request, exc: Exception) -> JSON
 
 app.include_router(auth_router)
 app.include_router(reports_router)
+app.include_router(admin_router)
 
 
 def _copy_set_cookie_headers(source: Response, target: Response) -> None:
