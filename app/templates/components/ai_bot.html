@@ -1,0 +1,191 @@
+{# SafeRoute Commuter Civic AI Assistant Widget
+   Allows commuters and admins to converse with an AI bot grounded in live road hazard data.
+#}
+
+{%- if current_user is defined and current_user is not none -%}
+<div
+  id="sr-civic-ai-widget"
+  x-data="{
+    open: false,
+    loading: false,
+    inputPrompt: '',
+    messages: [
+      {
+        sender: 'bot',
+        text: 'Hello! I am your SafeRoute Civic AI Assistant. Ask me anything about reported road hazards, repair resolutions, category breakdowns, or hotspots in Kukatpally.'
+      }
+    ],
+    suggestions: [
+      'How many hazards are resolved?',
+      'What issues are currently open?',
+      'Top hazard hotspots in Kukatpally',
+      'Break down issues by category'
+    ],
+    async sendQuery(queryText) {
+      const q = (queryText || this.inputPrompt || '').trim();
+      if (!q || this.loading) return;
+
+      this.messages.push({ sender: 'user', text: q });
+      this.inputPrompt = '';
+      this.loading = true;
+
+      // Scroll to bottom
+      this.$nextTick(() => {
+        const c = this.$refs.chatContainer;
+        if (c) c.scrollTop = c.scrollHeight;
+      });
+
+      try {
+        const res = await fetch('/api/ai/assistant', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          },
+          body: JSON.stringify({ query: q })
+        });
+
+        if (!res.ok) {
+          throw new Error('Failed to query civic AI');
+        }
+
+        const data = await res.json();
+        this.messages.push({ sender: 'bot', text: data.reply });
+        if (data.suggested_actions && data.suggested_actions.length > 0) {
+          this.suggestions = data.suggested_actions;
+        }
+      } catch (err) {
+        this.messages.push({
+          sender: 'bot',
+          text: 'Unable to reach the civic database right now. Please try asking again in a moment.'
+        });
+      } finally {
+        this.loading = false;
+        this.$nextTick(() => {
+          const c = this.$refs.chatContainer;
+          if (c) c.scrollTop = c.scrollHeight;
+        });
+      }
+    }
+  }"
+  class="fixed bottom-6 right-6 z-40"
+>
+  {# Floating Toggle Pill / Button #}
+  <button
+    type="button"
+    @click="open = !open"
+    class="inline-flex items-center gap-2.5 rounded-full bg-primary hover:bg-primary-dark text-white px-4 py-2.5 shadow-elevated transition-transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2"
+    aria-label="Toggle SafeRoute Civic AI Bot"
+  >
+    <span class="relative flex h-3 w-3">
+      <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent opacity-75"></span>
+      <span class="relative inline-flex rounded-full h-3 w-3 bg-accent"></span>
+    </span>
+    <svg class="h-5 w-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+    </svg>
+    <span class="text-sm font-bold tracking-tight">Civic AI Bot</span>
+  </button>
+
+  {# Sliding Popover Chat Window #}
+  <div
+    x-show="open"
+    x-cloak
+    @click.away="open = false"
+    class="absolute bottom-14 right-0 w-[90vw] sm:w-[400px] h-[520px] max-h-[80vh] bg-surface rounded-2xl shadow-elevated border border-border flex flex-col overflow-hidden transition-all duration-200"
+  >
+    {# Chat Header #}
+    <div class="px-4 py-3.5 bg-primary text-white flex items-center justify-between border-b border-primary-dark/60 shrink-0">
+      <div class="flex items-center gap-2.5 min-w-0">
+        <span class="inline-flex h-8 w-8 items-center justify-center rounded-xl bg-primary-dark border border-white/20 text-white shrink-0">
+          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"></path>
+          </svg>
+        </span>
+        <div class="truncate">
+          <h2 class="text-sm font-bold leading-tight">SafeRoute Civic AI</h2>
+          <p class="text-[11px] text-primary-soft">Live Road &amp; Resolution Data</p>
+        </div>
+      </div>
+      <button
+        type="button"
+        @click="open = false"
+        class="inline-flex p-1.5 rounded-lg text-white/80 hover:text-white hover:bg-white/10 transition-colors"
+        aria-label="Close Civic AI"
+      >
+        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
+    </div>
+
+    {# Messages Thread #}
+    <div
+      x-ref="chatContainer"
+      class="flex-1 p-4 overflow-y-auto space-y-3 bg-canvas text-xs sm:text-sm"
+    >
+      <template x-for="(msg, idx) in messages" :key="idx">
+        <div
+          class="flex"
+          :class="msg.sender === 'user' ? 'justify-end' : 'justify-start'"
+        >
+          <div
+            class="max-w-[85%] rounded-2xl px-3.5 py-2.5 whitespace-pre-line leading-relaxed shadow-sm"
+            :class="msg.sender === 'user' ? 'bg-primary text-white rounded-br-sm' : 'bg-surface text-ink border border-border rounded-bl-sm'"
+            x-text="msg.text"
+          ></div>
+        </div>
+      </template>
+
+      {# Loading bubble #}
+      <div x-show="loading" class="flex justify-start">
+        <div class="bg-surface border border-border rounded-2xl px-3.5 py-2.5 rounded-bl-sm flex items-center gap-2 text-muted text-xs">
+          <svg class="animate-spin h-3.5 w-3.5 text-primary" viewBox="0 0 24 24" fill="none">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+          </svg>
+          <span>Consulting live database...</span>
+        </div>
+      </div>
+    </div>
+
+    {# Quick suggestions chips #}
+    <div class="px-3 py-2 bg-surface border-t border-border/70 flex gap-1.5 overflow-x-auto shrink-0 no-scrollbar">
+      <template x-for="(sug, sidx) in suggestions" :key="sidx">
+        <button
+          type="button"
+          @click="sendQuery(sug)"
+          class="inline-flex shrink-0 items-center rounded-full bg-primary-soft text-primary-dark hover:bg-primary-soft/80 border border-primary/20 px-2.5 py-1 text-[11px] font-semibold transition-colors"
+          x-text="sug"
+        ></button>
+      </template>
+    </div>
+
+    {# Input Box #}
+    <form
+      @submit.prevent="sendQuery()"
+      class="p-3 bg-surface border-t border-border flex items-center gap-2 shrink-0"
+    >
+      <input
+        type="text"
+        x-model="inputPrompt"
+        placeholder="Ask about road issues, resolved repairs..."
+        class="flex-1 rounded-xl border border-border bg-canvas px-3.5 py-2 text-xs sm:text-sm text-ink placeholder:text-muted focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+        :disabled="loading"
+      />
+      <button
+        type="submit"
+        :disabled="loading || !inputPrompt.trim()"
+        class="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-primary text-white hover:bg-primary-dark disabled:opacity-50 transition-colors shrink-0"
+        aria-label="Send question"
+      >
+        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="22" y1="2" x2="11" y2="13"></line>
+          <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+        </svg>
+      </button>
+    </form>
+  </div>
+</div>
+{%- endif -%}

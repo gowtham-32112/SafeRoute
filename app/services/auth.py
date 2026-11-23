@@ -11,6 +11,7 @@ Pure business logic module (no FastAPI Request/Response coupling):
 
 import logging
 import re
+import time
 from typing import Any, Literal, Optional
 
 import httpx
@@ -369,14 +370,32 @@ def login_with_email(
     )
 
 
+_TOKEN_CACHE: dict[str, tuple[AuthenticatedUser, float]] = {}
+_CACHE_TTL_SECONDS = 60.0
+
+
+def clear_token_cache() -> None:
+    """Clear the in-memory validated token cache."""
+    global _TOKEN_CACHE
+    _TOKEN_CACHE.clear()
+
+
 def get_authenticated_user_from_token(
     access_token: str,
     app_settings: Optional[Settings] = None,
 ) -> AuthenticatedUser:
     """Validate a Supabase access token and load the trusted profile role."""
+    global _TOKEN_CACHE
     token = (access_token or "").strip()
     if not token:
         raise InvalidCredentialsError("Authentication required.")
+
+    now = time.time()
+    cached = _TOKEN_CACHE.get(token)
+    if cached is not None:
+        cached_user, expiry = cached
+        if now < expiry:
+            return cached_user
 
     try:
         client = get_supabase_client(app_settings)
@@ -398,12 +417,16 @@ def get_authenticated_user_from_token(
         raise InvalidCredentialsError("Invalid authentication token.")
 
     email = str(_extract_attr(user_obj, "email") or "")
-    return _fetch_trusted_profile(
+    user = _fetch_trusted_profile(
         user_id=str(user_id),
         email=email,
         access_token=token,
         app_settings=app_settings,
     )
+    _TOKEN_CACHE[token] = (user, now + _CACHE_TTL_SECONDS)
+    if len(_TOKEN_CACHE) > 500:
+        _TOKEN_CACHE = {k: v for k, v in _TOKEN_CACHE.items() if v[1] > now}
+    return user
 
 
 def refresh_user_session(
@@ -464,6 +487,8 @@ def logout_session(
     token = (access_token or "").strip()
     if not token:
         return
+
+    _TOKEN_CACHE.pop(token, None)
 
     cfg = app_settings or settings
     if not cfg.is_supabase_configured:

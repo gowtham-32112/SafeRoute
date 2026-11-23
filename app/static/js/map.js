@@ -255,83 +255,92 @@
       statusMessage: "Requesting your current location (5-second timeout).",
     });
 
-    var settled = false;
-
-    function finishOnce(fn) {
-      if (settled || seq !== requestSeq) {
+    // Defensive safety timer: if location takes longer than 5 seconds (e.g. prompt pending),
+    // display the fallback area so the user isn't stuck on a loading screen.
+    activeTimeoutId = window.setTimeout(function () {
+      if (seq !== requestSeq || mapState.locationMode === "live") {
         return;
       }
-      settled = true;
-      clearActiveTimeout();
-      fn();
-    }
-
-    // Defensive 5-second safety timer in case a browser stalls without invoking error callback
-    activeTimeoutId = window.setTimeout(function () {
-      finishOnce(function () {
-        applyFallback(
-          "Showing " + currentConfig.fallbackLabel,
-          "Location request timed out after 5 seconds. Showing the default area—press Re-centre on me to retry.",
-          animateOnResult
-        );
-      });
+      applyFallback(
+        "Showing " + currentConfig.fallbackLabel,
+        "Location request timed out after 5 seconds. Showing the default area—press Re-centre on me to retry.",
+        animateOnResult
+      );
     }, currentConfig.geolocationTimeoutMs);
 
     try {
       navigator.geolocation.getCurrentPosition(
         function (position) {
-          finishOnce(function () {
-            var coords = position && position.coords ? position.coords : null;
-            var lat = coords ? Number(coords.latitude) : NaN;
-            var lng = coords ? Number(coords.longitude) : NaN;
+          if (seq !== requestSeq) {
+            return;
+          }
+          clearActiveTimeout();
+          var coords = position && position.coords ? position.coords : null;
+          var lat = coords ? Number(coords.latitude) : NaN;
+          var lng = coords ? Number(coords.longitude) : NaN;
 
-            if (!isValidCoordinates(lat, lng)) {
-              applyFallback(
-                "Showing " + currentConfig.fallbackLabel,
-                "Received invalid coordinates from your browser. Showing the default area instead.",
-                animateOnResult
-              );
-              return;
-            }
+          if (!isValidCoordinates(lat, lng)) {
+            applyFallback(
+              "Showing " + currentConfig.fallbackLabel,
+              "Received invalid coordinates from your browser. Showing the default area instead.",
+              animateOnResult
+            );
+            return;
+          }
 
-            // Store strictly in browser memory only
-            lastLiveLocation = { lat: lat, lng: lng };
-            centerMapOn(lat, lng, true, animateOnResult);
-            updateState({
-              locating: false,
-              locationMode: "live",
-              statusTitle: "Centered on your location",
-              statusMessage:
-                "Showing your current area. Your live location stays in your browser and is never saved.",
-            });
+          // Store strictly in browser memory only
+          lastLiveLocation = { lat: lat, lng: lng };
+          centerMapOn(lat, lng, true, true);
+          updateState({
+            locating: false,
+            locationMode: "live",
+            statusTitle: "Centered on your location",
+            statusMessage:
+              "Showing your current area. Your live location stays in your browser and is never saved.",
           });
         },
         function (err) {
-          finishOnce(function () {
-            var info = describeGeolocationError(err, currentConfig.fallbackLabel);
-            applyFallback(info.title, info.message, animateOnResult);
-          });
+          if (seq !== requestSeq) {
+            return;
+          }
+          clearActiveTimeout();
+          if (mapState.locationMode === "live") {
+            return;
+          }
+          var info = describeGeolocationError(err, currentConfig.fallbackLabel);
+          applyFallback(info.title, info.message, animateOnResult);
         },
         {
           enableHighAccuracy: false,
-          timeout: currentConfig.geolocationTimeoutMs,
+          timeout: 15000,
           maximumAge: 60000,
         }
       );
     } catch (_geoErr) {
-      finishOnce(function () {
+      if (seq === requestSeq) {
+        clearActiveTimeout();
         applyFallback(
           "Showing " + currentConfig.fallbackLabel,
           "Could not access browser location. Showing the default area instead.",
           animateOnResult
         );
-      });
+      }
     }
   }
 
   function recenter() {
     if (!currentConfig || !mapInstance) {
       return;
+    }
+    if (lastLiveLocation && isValidCoordinates(lastLiveLocation.lat, lastLiveLocation.lng)) {
+      centerMapOn(lastLiveLocation.lat, lastLiveLocation.lng, true, true);
+      updateState({
+        locating: false,
+        locationMode: "live",
+        statusTitle: "Centered on your location",
+        statusMessage:
+          "Showing your current area. Your live location stays in your browser and is never saved.",
+      });
     }
     requestBrowserLocation(true);
   }

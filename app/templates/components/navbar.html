@@ -84,6 +84,10 @@
               <span class="inline-flex items-center rounded-full bg-accent px-2.5 py-0.5 text-xs font-bold text-ink">
                 Admin
               </span>
+            {%- else -%}
+              <span class="inline-flex items-center rounded-full bg-white/20 text-white border border-white/30 px-2.5 py-0.5 text-xs font-semibold">
+                Commuter
+              </span>
             {%- endif -%}
             <span class="max-w-[160px] truncate font-medium" title="{{ current_user.full_name or current_user.email }}">
               {{ current_user.full_name or current_user.email }}
@@ -167,6 +171,10 @@
             {%- if is_admin -%}
               <span class="inline-flex items-center rounded-full bg-accent px-2.5 py-0.5 text-xs font-bold text-ink shrink-0">
                 Admin
+              </span>
+            {%- else -%}
+              <span class="inline-flex items-center rounded-full bg-white/20 text-white border border-white/30 px-2.5 py-0.5 text-xs font-semibold shrink-0">
+                Commuter
               </span>
             {%- endif -%}
             <span class="truncate text-sm font-medium text-white/95">

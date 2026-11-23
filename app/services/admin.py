@@ -120,6 +120,56 @@ class EscalateReportResponse(BaseModel):
     escalated_by: str
 
 
+class ResolveReportRequest(BaseModel):
+    """Input payload for marking a hazard as resolved/fixed by an admin."""
+
+    resolution_note: str = Field(..., min_length=1, max_length=1000)
+
+
+class ResolveReportResponse(BaseModel):
+    """Authoritative response after recording a municipal resolution."""
+
+    report_id: str
+    status: Literal["fixed"] = "fixed"
+    fixed_at: str
+    resolution_note: str
+    resolved_by: str
+
+
+class CommuterProfileItem(BaseModel):
+    """Profile details for registered community members."""
+
+    id: str
+    full_name: str
+    role: Literal["user", "admin"]
+    created_at: str
+
+
+class UpdateUserRoleRequest(BaseModel):
+    """Payload to promote or demote a community member."""
+
+    role: Literal["user", "admin"]
+
+
+class AdminAllReportsItem(BaseModel):
+    """Summary item for administrative report inspection across all statuses."""
+
+    id: str
+    category: str
+    description: str
+    address_text: Optional[str] = None
+    status: str
+    severity_score: int
+    severity_band: Literal["low", "medium", "high"]
+    confidence: str
+    confirm_count: int
+    dispute_count: int
+    fixed_count: int
+    created_at: str
+    fixed_at: Optional[str] = None
+    escalated_at: Optional[str] = None
+
+
 # ==============================================================================
 # Service Operations
 # ==============================================================================
@@ -364,4 +414,179 @@ def escalate_hazard_report(
         note=clean_note,
         escalated_at=now_iso,
         escalated_by=admin_id,
+    )
+
+
+def resolve_hazard_report(
+    report_id: Any,
+    resolution_note: str,
+    admin_id: str,
+    access_token: str,
+    app_settings: Optional[Settings] = None,
+) -> ResolveReportResponse:
+    """Mark a hazard report as resolved/fixed by municipal administration.
+
+    Updates public.hazard_reports status to 'fixed', records resolution timestamp,
+    and inserts an authoritative resolution comment.
+    """
+    clean_id = validate_report_uuid(report_id)
+    clean_note = (resolution_note or "").strip()
+    if not clean_note:
+        raise AdminServiceError("Resolution note cannot be empty.", status_code=400)
+
+    client = create_authenticated_supabase_client(access_token, app_settings)
+
+    resp = (
+        client.table("hazard_reports")
+        .select("id, status")
+        .eq("id", clean_id)
+        .execute()
+    )
+    rows = _extract_data(resp)
+    if not rows or not isinstance(rows, list) or len(rows) == 0:
+        raise AdminServiceError("Hazard report not found.", status_code=404)
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    # 1. Update public.hazard_reports status to 'fixed'
+    client.table("hazard_reports").update(
+        {
+            "status": "fixed",
+            "fixed_at": now_iso,
+        }
+    ).eq("id", clean_id).execute()
+
+    # 2. Insert authoritative resolution comment
+    try:
+        client.table("comments").insert(
+            {
+                "report_id": clean_id,
+                "user_id": admin_id,
+                "content": f"[MUNICIPAL RESOLUTION] {clean_note}",
+                "is_anonymous": False,
+                "created_at": now_iso,
+            }
+        ).execute()
+    except Exception as exc:
+        logger.warning("Could not record resolution comment: %s", exc)
+
+    return ResolveReportResponse(
+        report_id=clean_id,
+        status="fixed",
+        fixed_at=now_iso,
+        resolution_note=clean_note,
+        resolved_by=admin_id,
+    )
+
+
+def list_all_admin_reports(
+    access_token: str,
+    status_filter: Optional[str] = None,
+    app_settings: Optional[Settings] = None,
+) -> list[AdminAllReportsItem]:
+    """Query hazard reports across all statuses for administrative audit and action."""
+    client = create_authenticated_supabase_client(access_token, app_settings)
+    query = (
+        client.table("hazard_reports")
+        .select(
+            "id, category, description, address_text, status, severity_score, "
+            "confidence, confirm_count, dispute_count, fixed_count, created_at, "
+            "fixed_at, escalated_at"
+        )
+        .order("created_at", desc=True)
+    )
+    if status_filter and status_filter in ("open", "escalated", "fixed"):
+        query = query.eq("status", status_filter)
+
+    resp = query.execute()
+    rows = _extract_data(resp) or []
+    items: list[AdminAllReportsItem] = []
+    for r in rows:
+        score = int(r.get("severity_score") or 0)
+        items.append(
+            AdminAllReportsItem(
+                id=str(r.get("id")),
+                category=str(r.get("category") or "other"),
+                description=str(r.get("description") or ""),
+                address_text=r.get("address_text"),
+                status=str(r.get("status") or "open"),
+                severity_score=score,
+                severity_band=severity_band(score),
+                confidence=str(r.get("confidence") or "medium"),
+                confirm_count=int(r.get("confirm_count") or 0),
+                dispute_count=int(r.get("dispute_count") or 0),
+                fixed_count=int(r.get("fixed_count") or 0),
+                created_at=str(r.get("created_at") or ""),
+                fixed_at=r.get("fixed_at"),
+                escalated_at=r.get("escalated_at"),
+            )
+        )
+    return items
+
+
+def list_commuter_profiles(
+    access_token: str,
+    app_settings: Optional[Settings] = None,
+) -> list[CommuterProfileItem]:
+    """Fetch registered commuter profiles for role management."""
+    client = create_authenticated_supabase_client(access_token, app_settings)
+    resp = (
+        client.table("profiles")
+        .select("id, full_name, role, created_at")
+        .order("created_at", desc=True)
+        .execute()
+    )
+    rows = _extract_data(resp) or []
+    results: list[CommuterProfileItem] = []
+    for r in rows:
+        results.append(
+            CommuterProfileItem(
+                id=str(r.get("id")),
+                full_name=str(r.get("full_name") or "Community Member"),
+                role="admin" if r.get("role") == "admin" else "user",
+                created_at=str(r.get("created_at") or ""),
+            )
+        )
+    return results
+
+
+def update_user_role(
+    target_user_id: str,
+    new_role: Literal["user", "admin"],
+    admin_id: str,
+    access_token: str,
+    app_settings: Optional[Settings] = None,
+) -> CommuterProfileItem:
+    """Promote a commuter to admin or adjust a profile role.
+
+    Guards against self-demotion to avoid administrative lockout.
+    """
+    from app.services.auth import clear_token_cache
+
+    if target_user_id == admin_id and new_role != "admin":
+        raise AdminServiceError(
+            "Admins cannot demote their own account to prevent administrative lockout.",
+            status_code=400,
+        )
+
+    client = create_authenticated_supabase_client(access_token, app_settings)
+    resp = (
+        client.table("profiles")
+        .update({"role": new_role})
+        .eq("id", target_user_id)
+        .execute()
+    )
+    rows = _extract_data(resp)
+    if not rows or not isinstance(rows, list) or len(rows) == 0:
+        raise AdminServiceError("Profile not found or update not permitted.", status_code=404)
+
+    # Invalidate token cache so role update takes effect immediately
+    clear_token_cache()
+
+    r = rows[0]
+    return CommuterProfileItem(
+        id=str(r.get("id")),
+        full_name=str(r.get("full_name") or "Community Member"),
+        role="admin" if r.get("role") == "admin" else "user",
+        created_at=str(r.get("created_at") or ""),
     )
