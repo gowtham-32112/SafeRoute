@@ -475,6 +475,28 @@
             <span x-text="voteErrorMessage"></span>
           </div>
         </template>
+
+        {% if current_user is defined and current_user and (current_user.is_admin or current_user.role == 'admin') and report.status != 'fixed' %}
+          <div class="mt-4 rounded-xl border border-primary/30 bg-primary-soft p-4 space-y-2">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <span class="inline-flex items-center rounded-full bg-accent text-ink px-2 py-0.5 text-xs font-bold">Admin Authority</span>
+                <span class="text-xs font-bold text-primary-dark">Direct Municipal Resolution</span>
+              </div>
+            </div>
+            <p class="text-xs text-ink leading-relaxed">
+              As a Municipal Administrator, you can directly mark this hazard as resolved and close the issue without waiting for community votes.
+            </p>
+            <div class="pt-2">
+              <a
+                href="/admin/escalations"
+                class="inline-flex items-center gap-2 rounded-full bg-primary hover:bg-primary-dark text-white px-4 py-2 text-xs font-bold transition-colors shadow-sm"
+              >
+                Manage &amp; Resolve in Admin Dashboard &rarr;
+              </a>
+            </div>
+          </div>
+        {% endif %}
       </div>
     {% endif %}
   </section>

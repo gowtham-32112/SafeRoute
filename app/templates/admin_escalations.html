@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 
-{% block title %}Admin Escalation Dashboard — SafeRoute{% endblock %}
-{% block meta_description %}Municipal administrative dashboard for reviewing and escalating high-severity road hazards.{% endblock %}
+{% block title %}Admin Escalation & Municipal Dashboard — SafeRoute{% endblock %}
+{% block meta_description %}Municipal administrative dashboard for reviewing, resolving, and escalating road hazards, managing commuter roles, and broadcasting alerts.{% endblock %}
 
 {% block head_extra %}
 <script src="/static/js/admin_escalations.js"></script>
@@ -10,6 +10,12 @@
 {% block content %}
 <script id="sr-admin-dashboard-data" type="application/json">
   {{ dashboard.model_dump() | tojson }}
+</script>
+<script id="sr-admin-all-reports-data" type="application/json">
+  {{ all_reports | tojson }}
+</script>
+<script id="sr-admin-commuters-data" type="application/json">
+  {{ commuters | tojson }}
 </script>
 <input type="hidden" id="sr-admin-csrf-token" value="{{ csrf_token }}">
 
@@ -33,7 +39,7 @@
         Hazard Escalation Dashboard
       </h1>
       <p class="text-xs sm:text-sm text-muted mt-1 max-w-3xl">
-        Review community-flagged road hazards requiring official intervention. Hazards are automatically queued when community confirmations reach 5 or severity reaches 70.
+        Manage road hazards, escalate to civic authorities, resolve and close reported issues, promote community commuters to admin, and broadcast safety advisories.
       </p>
     </div>
 
@@ -75,248 +81,573 @@
     </div>
   </template>
 
-  {# KPI Summary Strip #}
-  <section class="grid grid-cols-1 sm:grid-cols-3 gap-4" aria-label="Escalation metrics summary">
-    {# KPI 1: Pending Escalations #}
-    <div class="rounded-card border border-border bg-surface p-5 shadow-card">
-      <div class="flex items-center justify-between">
-        <p class="text-xs font-bold uppercase tracking-wider text-muted">Pending Review</p>
-        <span class="inline-flex h-8 w-8 items-center justify-center rounded-xl bg-amber-50 text-amber-700 border border-amber-200">
-          <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-            <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
-          </svg>
-        </span>
-      </div>
-      <p id="sr-kpi-pending" class="text-3xl font-extrabold text-ink mt-2" x-text="pendingCount">
-        {{ dashboard.pending_count }}
-      </p>
-      <p class="text-[11px] text-muted mt-1">Hazard reports awaiting municipal action</p>
-    </div>
+  {# Admin Navigation Tabs #}
+  <div class="flex border-b border-border gap-2 sm:gap-4 overflow-x-auto no-scrollbar">
+    <button
+      type="button"
+      @click="currentTab = 'escalations'"
+      class="pb-3 text-xs sm:text-sm font-bold border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap"
+      :class="currentTab === 'escalations' ? 'border-primary text-primary-dark' : 'border-transparent text-muted hover:text-ink'"
+    >
+      <span>Escalation Queue</span>
+      <span
+        class="rounded-full px-2 py-0.5 text-[11px]"
+        :class="currentTab === 'escalations' ? 'bg-primary-soft text-primary-dark font-black' : 'bg-canvas text-muted'"
+        x-text="pendingCount"
+      ></span>
+    </button>
 
-    {# KPI 2: High Severity Hazards #}
-    <div class="rounded-card border border-border bg-surface p-5 shadow-card">
-      <div class="flex items-center justify-between">
-        <p class="text-xs font-bold uppercase tracking-wider text-muted">High Severity (≥70)</p>
-        <span class="inline-flex h-8 w-8 items-center justify-center rounded-xl bg-red-50 text-red-700 border border-red-200">
-          <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-            <path fill-rule="evenodd" d="M12.395 2.553a1 1 0 00-1.45-.385c-.345.23-.614.558-.822.88-.527.82-1.162 2.13-1.477 3.308-.266 1.002-.387 1.954-.387 2.644 0 .34.028.647.078.918a3.003 3.003 0 01-1.077-.442 4.01 4.01 0 01-1.353-1.704.996.996 0 00-1.306-.525 1 1 0 00-.573 1.157c.22 1.096.764 2.146 1.547 2.928 1.154 1.154 2.68 1.77 4.225 1.77 1.545 0 3.071-.616 4.225-1.77 1.154-1.154 1.77-2.68 1.77-4.225 0-2.316-1.378-4.526-2.81-6.143z" clip-rule="evenodd" />
-          </svg>
-        </span>
-      </div>
-      <p id="sr-kpi-high-severity" class="text-3xl font-extrabold text-red-700 mt-2" x-text="highSeverityCount">
-        {{ dashboard.high_severity_count }}
-      </p>
-      <p class="text-[11px] text-muted mt-1">Critical risks requiring emergency patch</p>
-    </div>
+    <button
+      type="button"
+      @click="currentTab = 'all_reports'"
+      class="pb-3 text-xs sm:text-sm font-bold border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap"
+      :class="currentTab === 'all_reports' ? 'border-primary text-primary-dark' : 'border-transparent text-muted hover:text-ink'"
+    >
+      <span>All Issues &amp; Resolution</span>
+      <span
+        class="rounded-full px-2 py-0.5 text-[11px]"
+        :class="currentTab === 'all_reports' ? 'bg-primary-soft text-primary-dark font-black' : 'bg-canvas text-muted'"
+        x-text="allReports.length"
+      ></span>
+    </button>
 
-    {# KPI 3: Total Escalated #}
-    <div class="rounded-card border border-border bg-surface p-5 shadow-card">
-      <div class="flex items-center justify-between">
-        <p class="text-xs font-bold uppercase tracking-wider text-muted">Total Escalated</p>
-        <span class="inline-flex h-8 w-8 items-center justify-center rounded-xl bg-blue-50 text-primary border border-blue-200">
-          <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-8.707l-3-3a1 1 0 00-1.414 1.414L10.586 9H7a1 1 0 100 2h3.586l-1.293 1.293a1 1 0 101.414 1.414l3-3a1 1 0 000-1.414z" clip-rule="evenodd" />
-          </svg>
-        </span>
-      </div>
-      <p id="sr-kpi-total-escalated" class="text-3xl font-extrabold text-primary-dark mt-2" x-text="totalEscalatedCount">
-        {{ dashboard.total_escalated_count }}
-      </p>
-      <p class="text-[11px] text-muted mt-1">Transferred to municipal circle teams</p>
-    </div>
-  </section>
+    <button
+      type="button"
+      @click="currentTab = 'commuters'"
+      class="pb-3 text-xs sm:text-sm font-bold border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap"
+      :class="currentTab === 'commuters' ? 'border-primary text-primary-dark' : 'border-transparent text-muted hover:text-ink'"
+    >
+      <span>Commuters &amp; Roles</span>
+      <span
+        class="rounded-full px-2 py-0.5 text-[11px]"
+        :class="currentTab === 'commuters' ? 'bg-primary-soft text-primary-dark font-black' : 'bg-canvas text-muted'"
+        x-text="commuters.length"
+      ></span>
+    </button>
 
-  {# Pending Escalations Queue #}
-  <section class="space-y-4" aria-labelledby="sr-queue-heading">
-    <div class="flex items-center justify-between">
-      <div>
-        <h2 id="sr-queue-heading" class="text-lg sm:text-xl font-bold text-primary-dark tracking-tight">
-          Pending Escalation Queue
-        </h2>
-        <p class="text-xs text-muted mt-0.5">
-          Road hazards sorted by urgency. Click "Mark as Escalated" to log official authority assignment.
-        </p>
-      </div>
-      <span class="text-xs font-semibold text-muted">
-        <span x-text="candidates.length">{{ dashboard.candidates | length }}</span> hazards
-      </span>
-    </div>
+    <button
+      type="button"
+      @click="currentTab = 'broadcast'"
+      class="pb-3 text-xs sm:text-sm font-bold border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap"
+      :class="currentTab === 'broadcast' ? 'border-primary text-primary-dark' : 'border-transparent text-muted hover:text-ink'"
+    >
+      <span>Civic Broadcasts</span>
+      <span
+        x-show="activeBroadcast"
+        class="h-2 w-2 rounded-full bg-amber-500"
+        title="Active broadcast live"
+      ></span>
+    </button>
+  </div>
 
-    {# Empty State #}
-    <template x-if="candidates.length === 0">
-      <div id="sr-empty-candidates" class="rounded-card border border-dashed border-border bg-surface p-8 sm:p-12 text-center space-y-3">
-        <div class="inline-flex h-12 w-12 items-center justify-center rounded-full bg-emerald-50 text-emerald-600 mb-1">
-          <svg class="h-6 w-6" viewBox="0 0 20 20" fill="currentColor">
-            <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
-          </svg>
+  {# ========================================================================= #}
+  {# TAB 1: ESCALATION QUEUE (Existing core view)                             #}
+  {# ========================================================================= #}
+  <div x-show="currentTab === 'escalations'" class="space-y-6">
+    {# KPI Summary Strip #}
+    <section class="grid grid-cols-1 sm:grid-cols-3 gap-4" aria-label="Escalation metrics summary">
+      <div class="rounded-card border border-border bg-surface p-5 shadow-card">
+        <div class="flex items-center justify-between">
+          <p class="text-xs font-bold uppercase tracking-wider text-muted">Pending Review</p>
+          <span class="inline-flex h-8 w-8 items-center justify-center rounded-xl bg-amber-50 text-amber-700 border border-amber-200">
+            <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+              <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
+            </svg>
+          </span>
         </div>
-        <h3 class="text-base font-bold text-ink">No Pending Escalations</h3>
-        <p class="text-xs sm:text-sm text-muted max-w-md mx-auto">
-          All hazards meeting escalation criteria have been reviewed and forwarded to municipal authorities.
+        <p id="sr-kpi-pending" class="text-3xl font-extrabold text-ink mt-2" x-text="pendingCount">
+          {{ dashboard.pending_count }}
         </p>
+        <p class="text-[11px] text-muted mt-1">Hazard reports awaiting municipal action</p>
       </div>
-    </template>
 
-    {# Queue Cards List #}
-    <div id="sr-candidate-list" class="space-y-4">
-      <template x-for="candidate in candidates" :key="candidate.id">
-        <div
-          :id="'sr-candidate-' + candidate.id"
-          class="rounded-card border border-border bg-surface p-5 shadow-card hover:border-primary/40 transition-colors space-y-4"
-        >
-          {# Top Row: Category, Severity, Age, Flagged Reasons #}
-          <div class="flex flex-wrap items-center justify-between gap-2.5">
-            <div class="flex flex-wrap items-center gap-2">
-              {# Category Chip #}
-              <span class="inline-flex items-center rounded-full bg-primary-soft text-primary-dark border border-primary/20 px-3 py-0.5 text-xs font-bold uppercase tracking-wide">
-                <span x-text="categoryLabel(candidate.category)"></span>
-              </span>
+      <div class="rounded-card border border-border bg-surface p-5 shadow-card">
+        <div class="flex items-center justify-between">
+          <p class="text-xs font-bold uppercase tracking-wider text-muted">High Severity (≥70)</p>
+          <span class="inline-flex h-8 w-8 items-center justify-center rounded-xl bg-red-50 text-red-700 border border-red-200">
+            <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+              <path fill-rule="evenodd" d="M12.395 2.553a1 1 0 00-1.45-.385c-.345.23-.614.558-.822.88-.316.492-.474.966-.567 1.385-.106.47-.13.882-.13 1.157 0 .348.03.627.07.827a.5.5 0 01-.892.414c-.2-.43-.377-1.047-.377-1.831a1 1 0 00-2 0c0 1.258.337 2.296.837 3.093.498.793 1.196 1.38 1.968 1.688A5.992 5.992 0 008 16a6 6 0 106-6c-.198 0-.392.016-.582.046a.5.5 0 01-.486-.807c.224-.31.396-.684.502-1.09.117-.449.146-.91.146-1.349 0-.464-.047-.942-.162-1.41a5.98 5.98 0 00-1.023-2.837z" clip-rule="evenodd" />
+            </svg>
+          </span>
+        </div>
+        <p id="sr-kpi-high-severity" class="text-3xl font-extrabold text-ink mt-2" x-text="highSeverityCount">
+          {{ dashboard.high_severity_count }}
+        </p>
+        <p class="text-[11px] text-muted mt-1">Requiring immediate emergency attention</p>
+      </div>
 
-              {# Severity Badge #}
-              <span
-                class="inline-flex items-center gap-1.5 rounded-full border px-3 py-0.5 text-xs font-bold"
-                :class="{
-                  'sr-severity-high': candidate.severity_band === 'high',
-                  'sr-severity-medium': candidate.severity_band === 'medium',
-                  'sr-severity-low': candidate.severity_band === 'low'
-                }"
-              >
+      <div class="rounded-card border border-border bg-surface p-5 shadow-card">
+        <div class="flex items-center justify-between">
+          <p class="text-xs font-bold uppercase tracking-wider text-muted">Total Escalated</p>
+          <span class="inline-flex h-8 w-8 items-center justify-center rounded-xl bg-primary-soft text-primary-dark border border-primary/20">
+            <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+              <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
+            </svg>
+          </span>
+        </div>
+        <p id="sr-kpi-total-escalated" class="text-3xl font-extrabold text-ink mt-2" x-text="totalEscalatedCount">
+          {{ dashboard.total_escalated_count }}
+        </p>
+        <p class="text-[11px] text-muted mt-1">Dispatched to road maintenance authorities</p>
+      </div>
+    </section>
+
+    {# Pending Candidate Reports Queue #}
+    <section class="space-y-4" aria-label="Escalation candidate reports">
+      <div class="flex items-center justify-between">
+        <h2 class="text-lg font-bold text-primary-dark">Escalation Candidate Queue</h2>
+        <span class="text-xs text-muted" x-text="candidates.length + ' reports flagged'"></span>
+      </div>
+
+      <template x-if="candidates.length === 0">
+        <div class="rounded-card border border-dashed border-border bg-surface p-8 text-center space-y-2">
+          <svg class="mx-auto h-8 w-8 text-emerald-600" viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
+          </svg>
+          <p class="text-sm font-semibold text-ink">Queue Clear</p>
+          <p class="text-xs text-muted max-w-md mx-auto">
+            No open hazards currently meet the escalation threshold (confirmations &ge; 5 or severity &ge; 70).
+          </p>
+        </div>
+      </template>
+
+      <div id="sr-escalation-candidate-list" class="space-y-4">
+        <template x-for="item in candidates" :key="item.id">
+          <div class="rounded-card border border-border bg-surface p-5 shadow-card hover:border-primary/40 transition-colors space-y-3">
+            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+              <div class="flex items-center gap-2.5">
                 <span
-                  class="h-2 w-2 rounded-full shrink-0"
-                  :class="{
-                    'sr-severity-high-dot': candidate.severity_band === 'high',
-                    'sr-severity-medium-dot': candidate.severity_band === 'medium',
-                    'sr-severity-low-dot': candidate.severity_band === 'low'
-                  }"
+                  class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-bold uppercase tracking-wider"
+                  :class="item.severity_score >= 70 ? 'bg-red-100 text-red-800 border border-red-300' : 'bg-amber-100 text-amber-800 border border-amber-300'"
+                  x-text="item.severity_band + ' (' + item.severity_score + ')'"
                 ></span>
-                <span x-text="candidate.severity_band.charAt(0).toUpperCase() + candidate.severity_band.slice(1)"></span>
-                <span class="opacity-80">&middot; <span x-text="candidate.severity_score"></span>/100</span>
-              </span>
-
-              {# Flag Reasons #}
-              <template x-for="reason in candidate.flag_reasons" :key="reason">
-                <span class="inline-flex items-center rounded-full bg-amber-50 text-amber-900 border border-amber-200 px-2.5 py-0.5 text-[11px] font-semibold">
-                  <span x-text="reason"></span>
-                </span>
-              </template>
+                <span class="font-bold text-ink text-sm sm:text-base" x-text="categoryLabel(item.category)"></span>
+              </div>
+              <span class="text-xs text-muted" x-text="'Reported ' + formatDate(item.created_at)"></span>
             </div>
 
-            {# Freshness Timestamp #}
-            <span class="text-xs text-muted" x-text="'Reported ' + formatDate(candidate.created_at)"></span>
-          </div>
+            <p class="text-xs sm:text-sm text-ink leading-relaxed" x-text="item.description"></p>
 
-          {# Middle: Description & Location #}
-          <div class="space-y-1">
-            <p class="text-sm font-semibold text-ink leading-relaxed" x-text="candidate.description"></p>
-            <p class="text-xs text-muted flex items-center gap-1">
-              <svg class="h-3.5 w-3.5 shrink-0 text-muted" viewBox="0 0 20 20" fill="currentColor">
-                <path fill-rule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clip-rule="evenodd" />
-              </svg>
-              <span x-text="candidate.address_text || (candidate.lat.toFixed(4) + ', ' + candidate.lng.toFixed(4))"></span>
-            </p>
-          </div>
-
-          {# Bottom Row: Community Consensus Counts & Action Buttons #}
-          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-3 border-t border-border">
-            <div class="flex items-center gap-3 text-xs text-muted">
-              <span class="inline-flex items-center gap-1">
-                <strong class="text-emerald-700" x-text="candidate.confirm_count"></strong> confirmations
-              </span>
-              <span>&middot;</span>
-              <span class="inline-flex items-center gap-1">
-                <strong class="text-red-600" x-text="candidate.dispute_count"></strong> disputes
-              </span>
-              <template x-if="candidate.has_evidence_photo">
-                <span class="inline-flex items-center gap-1 text-primary">
-                  <span>&middot;</span>
-                  <span>Photo attached</span>
-                </span>
-              </template>
-            </div>
-
-            <div class="flex items-center gap-2.5">
-              <a
-                :href="'/reports/' + candidate.id"
-                class="inline-flex items-center justify-center rounded-full border border-border px-4 py-2 text-xs font-semibold text-ink hover:bg-canvas transition-colors min-h-[38px]"
-              >
-                View Report
-              </a>
-
-              <button
-                type="button"
-                :id="'sr-escalate-btn-' + candidate.id"
-                @click="openModal(candidate)"
-                class="inline-flex items-center justify-center gap-1.5 rounded-full bg-primary px-4 py-2 text-xs font-bold text-white hover:bg-primary-dark transition-colors shadow-sm min-h-[38px]"
-              >
-                <svg class="h-3.5 w-3.5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
-                  <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-8.707l-3-3a1 1 0 00-1.414 1.414L10.586 9H7a1 1 0 100 2h3.586l-1.293 1.293a1 1 0 101.414 1.414l3-3a1 1 0 000-1.414z" clip-rule="evenodd" />
+            <div class="flex flex-wrap items-center gap-3 text-xs text-muted pt-1">
+              <span class="flex items-center gap-1">
+                <svg class="h-3.5 w-3.5 text-muted" viewBox="0 0 20 20" fill="currentColor">
+                  <path fill-rule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clip-rule="evenodd" />
                 </svg>
-                <span>Mark as Escalated</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      </template>
-    </div>
-  </section>
-
-  {# Audit Trail: Recently Escalated Hazards #}
-  <section class="space-y-4 pt-4 border-t border-border" aria-labelledby="sr-audit-heading">
-    <div class="flex items-center justify-between">
-      <div>
-        <h2 id="sr-audit-heading" class="text-lg sm:text-xl font-bold text-primary-dark tracking-tight">
-          Recently Escalated Hazards
-        </h2>
-        <p class="text-xs text-muted mt-0.5">
-          Audit trail of road hazards officially referred to municipal maintenance authorities.
-        </p>
-      </div>
-      <span class="text-xs font-semibold text-muted">
-        <span x-text="recentEscalations.length">{{ dashboard.recent_escalations | length }}</span> logged
-      </span>
-    </div>
-
-    {# Empty state for audit trail #}
-    <template x-if="recentEscalations.length === 0">
-      <div class="rounded-card border border-dashed border-border bg-surface p-6 text-center text-xs sm:text-sm text-muted">
-        No hazards have been escalated yet. Escalated reports will appear here for audit tracking.
-      </div>
-    </template>
-
-    {# Escalated Cards #}
-    <div id="sr-recent-escalated-list" class="space-y-3">
-      <template x-for="item in recentEscalations" :key="item.id">
-        <div class="rounded-card border border-border bg-surface p-4 shadow-sm space-y-2.5">
-          <div class="flex flex-wrap items-center justify-between gap-2 text-xs">
-            <div class="flex items-center gap-2">
-              <span class="inline-flex items-center gap-1 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 px-2.5 py-0.5 font-bold uppercase text-[10px]">
-                Escalated
+                <span x-text="item.address_text || (item.lat.toFixed(4) + ', ' + item.lng.toFixed(4))"></span>
               </span>
-              <span class="font-bold text-ink" x-text="categoryLabel(item.category)"></span>
-              <span class="text-muted" x-text="'&middot; ' + item.authority_name"></span>
+              <span>&bull;</span>
+              <span x-text="item.confirm_count + ' confirms, ' + item.dispute_count + ' disputes'"></span>
             </div>
-            <span class="text-muted" x-text="formatDate(item.escalated_at)"></span>
+
+            <div class="flex items-center justify-between pt-2 border-t border-border">
+              <a :href="'/reports/' + item.id" class="text-xs font-semibold text-primary hover:underline">
+                View Report Detail &rarr;
+              </a>
+              <div class="flex items-center gap-2">
+                <button
+                  type="button"
+                  @click="openResolveModal(item)"
+                  class="inline-flex items-center gap-1.5 rounded-full border border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 px-3.5 py-1.5 text-xs font-bold transition-colors shadow-sm"
+                >
+                  <span>Resolve &amp; Close</span>
+                </button>
+                <button
+                  type="button"
+                  @click="openModal(item)"
+                  class="inline-flex items-center gap-1.5 rounded-full bg-primary px-3.5 py-1.5 text-xs font-bold text-white hover:bg-primary-dark transition-colors shadow-sm"
+                >
+                  <span>Escalate to Authority</span>
+                </button>
+              </div>
+            </div>
           </div>
+        </template>
+      </div>
+    </section>
 
-          <p class="text-xs sm:text-sm text-ink" x-text="item.description"></p>
-
-          <div class="rounded-lg bg-canvas p-2.5 text-xs text-muted border border-border">
-            <span class="font-bold text-ink">Administrative Note: </span>
-            <span x-text="item.note"></span>
+    {# Recent Escalations Log #}
+    <section class="space-y-4 pt-4 border-t border-border" aria-label="Recent escalation log">
+      <h2 class="text-lg font-bold text-primary-dark">Recent Authoritative Escalations</h2>
+      <div id="sr-recent-escalated-list" class="space-y-3">
+        <template x-for="item in recentEscalations" :key="item.id">
+          <div class="rounded-card border border-border bg-surface p-4 shadow-sm space-y-2.5">
+            <div class="flex flex-wrap items-center justify-between gap-2 text-xs">
+              <div class="flex items-center gap-2">
+                <span class="inline-flex items-center gap-1 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 px-2.5 py-0.5 font-bold uppercase text-[10px]">
+                  Escalated
+                </span>
+                <span class="font-bold text-ink" x-text="categoryLabel(item.category)"></span>
+                <span class="text-muted" x-text="'&middot; ' + item.authority_name"></span>
+              </div>
+              <span class="text-muted" x-text="formatDate(item.escalated_at)"></span>
+            </div>
+            <p class="text-xs sm:text-sm text-ink" x-text="item.description"></p>
+            <div class="rounded-lg bg-canvas p-2.5 text-xs text-muted border border-border">
+              <span class="font-bold text-ink">Administrative Note: </span>
+              <span x-text="item.note"></span>
+            </div>
           </div>
+        </template>
+      </div>
+    </section>
+  </div>
 
-          <div class="flex items-center justify-between text-xs pt-1">
-            <span class="text-muted" x-text="item.address_text || 'Coordinates available'"></span>
-            <a :href="'/reports/' + item.report_id" class="font-semibold text-primary hover:underline">
-              View Report &rarr;
-            </a>
+  {# ========================================================================= #}
+  {# TAB 2: ALL ISSUES & RESOLUTION (Inspection & Direct Closure)             #}
+  {# ========================================================================= #}
+  <div x-show="currentTab === 'all_reports'" class="space-y-4">
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+      <div>
+        <h2 class="text-lg font-bold text-primary-dark">Comprehensive Hazard Audit &amp; Resolution</h2>
+        <p class="text-xs text-muted">Inspect every reported hazard across the city. Municipal Admins can directly resolve and close issues.</p>
+      </div>
+
+      {# Status Filter Chips #}
+      <div class="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+        <button
+          type="button"
+          @click="reportStatusFilter = 'all'"
+          class="rounded-full px-3 py-1 text-xs font-semibold transition-colors"
+          :class="reportStatusFilter === 'all' ? 'bg-primary text-white' : 'bg-surface border border-border text-muted hover:text-ink'"
+        >All</button>
+        <button
+          type="button"
+          @click="reportStatusFilter = 'open'"
+          class="rounded-full px-3 py-1 text-xs font-semibold transition-colors"
+          :class="reportStatusFilter === 'open' ? 'bg-primary text-white' : 'bg-surface border border-border text-muted hover:text-ink'"
+        >Open</button>
+        <button
+          type="button"
+          @click="reportStatusFilter = 'escalated'"
+          class="rounded-full px-3 py-1 text-xs font-semibold transition-colors"
+          :class="reportStatusFilter === 'escalated' ? 'bg-primary text-white' : 'bg-surface border border-border text-muted hover:text-ink'"
+        >Escalated</button>
+        <button
+          type="button"
+          @click="reportStatusFilter = 'fixed'"
+          class="rounded-full px-3 py-1 text-xs font-semibold transition-colors"
+          :class="reportStatusFilter === 'fixed' ? 'bg-primary text-white' : 'bg-surface border border-border text-muted hover:text-ink'"
+        >Fixed</button>
+      </div>
+    </div>
+
+    {# Reports Table / List #}
+    <div class="rounded-card border border-border bg-surface overflow-hidden shadow-card">
+      <div class="overflow-x-auto">
+        <table class="w-full text-left text-xs sm:text-sm">
+          <thead class="bg-canvas border-b border-border text-[11px] font-bold uppercase tracking-wider text-muted">
+            <tr>
+              <th class="p-3.5">Category &amp; Details</th>
+              <th class="p-3.5">Status</th>
+              <th class="p-3.5">Severity</th>
+              <th class="p-3.5">Reported</th>
+              <th class="p-3.5 text-right">Administrative Actions</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-border">
+            <template x-for="r in filteredReports()" :key="r.id">
+              <tr class="hover:bg-canvas/60 transition-colors">
+                <td class="p-3.5 max-w-xs">
+                  <p class="font-bold text-ink" x-text="categoryLabel(r.category)"></p>
+                  <p class="text-xs text-muted truncate mt-0.5" x-text="r.description"></p>
+                  <p class="text-[11px] text-muted truncate mt-0.5" x-text="r.address_text || 'Coordinates on map'"></p>
+                </td>
+                <td class="p-3.5 whitespace-nowrap">
+                  <span
+                    class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-bold uppercase"
+                    :class="{
+                      'bg-primary-soft text-primary-dark': r.status === 'open',
+                      'bg-amber-100 text-amber-900 border border-amber-300': r.status === 'escalated',
+                      'bg-emerald-100 text-emerald-900 border border-emerald-300': r.status === 'fixed'
+                    }"
+                    x-text="r.status"
+                  ></span>
+                </td>
+                <td class="p-3.5 whitespace-nowrap">
+                  <span class="font-bold text-ink" x-text="r.severity_score + '/100'"></span>
+                  <span class="text-xs text-muted block" x-text="r.severity_band"></span>
+                </td>
+                <td class="p-3.5 whitespace-nowrap text-muted text-xs" x-text="formatDate(r.created_at)"></td>
+                <td class="p-3.5 whitespace-nowrap text-right">
+                  <div class="inline-flex items-center gap-2">
+                    <a :href="'/reports/' + r.id" class="text-xs font-semibold text-primary hover:underline">
+                      View
+                    </a>
+                    <template x-if="r.status !== 'fixed'">
+                      <button
+                        type="button"
+                        @click="openResolveModal(r)"
+                        class="inline-flex items-center rounded-full bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1 text-xs font-bold transition-colors shadow-sm"
+                      >
+                        Resolve &amp; Close
+                      </button>
+                    </template>
+                    <template x-if="r.status === 'fixed'">
+                      <span class="text-xs font-semibold text-emerald-700">&check; Resolved</span>
+                    </template>
+                  </div>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  {# ========================================================================= #}
+  {# TAB 3: COMMUTERS & ROLES (Promote / Demote)                              #}
+  {# ========================================================================= #}
+  <div x-show="currentTab === 'commuters'" class="space-y-4">
+    <div>
+      <h2 class="text-lg font-bold text-primary-dark">Community Members &amp; Roles</h2>
+      <p class="text-xs text-muted">Manage user permissions. Municipal Admins can promote active commuters to the Admin role to share operational responsibilities.</p>
+    </div>
+
+    <div class="rounded-card border border-border bg-surface overflow-hidden shadow-card">
+      <div class="overflow-x-auto">
+        <table class="w-full text-left text-xs sm:text-sm">
+          <thead class="bg-canvas border-b border-border text-[11px] font-bold uppercase tracking-wider text-muted">
+            <tr>
+              <th class="p-3.5">Community Member</th>
+              <th class="p-3.5">User ID</th>
+              <th class="p-3.5">Current Role</th>
+              <th class="p-3.5">Joined</th>
+              <th class="p-3.5 text-right">Role Promotion</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-border">
+            <template x-for="u in commuters" :key="u.id">
+              <tr class="hover:bg-canvas/60 transition-colors">
+                <td class="p-3.5 font-bold text-ink" x-text="u.full_name || 'Community Member'"></td>
+                <td class="p-3.5 text-xs text-muted font-mono" x-text="u.id.substring(0, 8) + '...'"></td>
+                <td class="p-3.5 whitespace-nowrap">
+                  <span
+                    class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-bold"
+                    :class="u.role === 'admin' ? 'bg-accent text-ink' : 'bg-primary-soft text-primary-dark'"
+                    x-text="u.role === 'admin' ? 'Municipal Admin' : 'Commuter'"
+                  ></span>
+                </td>
+                <td class="p-3.5 text-muted text-xs whitespace-nowrap" x-text="formatDate(u.created_at)"></td>
+                <td class="p-3.5 text-right whitespace-nowrap">
+                  <template x-if="u.role === 'user'">
+                    <button
+                      type="button"
+                      @click="updateUserRole(u.id, 'admin')"
+                      class="inline-flex items-center rounded-full bg-primary hover:bg-primary-dark text-white px-3 py-1 text-xs font-bold transition-colors shadow-sm"
+                    >
+                      Promote to Admin &uarr;
+                    </button>
+                  </template>
+                  <template x-if="u.role === 'admin'">
+                    <button
+                      type="button"
+                      @click="updateUserRole(u.id, 'user')"
+                      class="inline-flex items-center rounded-full border border-border bg-surface hover:bg-canvas text-muted hover:text-ink px-3 py-1 text-xs font-semibold transition-colors"
+                    >
+                      Demote to Commuter
+                    </button>
+                  </template>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  {# ========================================================================= #}
+  {# TAB 4: CIVIC BROADCASTS (Broadcast to all users & commuters)              #}
+  {# ========================================================================= #}
+  <div x-show="currentTab === 'broadcast'" class="space-y-6">
+    <div>
+      <h2 class="text-lg font-bold text-primary-dark">System-Wide Civic Broadcasts</h2>
+      <p class="text-xs text-muted">Broadcast emergency alerts, weather warnings, or road repair notifications to all commuters and visitors across the application.</p>
+    </div>
+
+    {# Active Broadcast Card #}
+    <div class="rounded-card border border-border bg-surface p-5 shadow-card space-y-3">
+      <div class="flex items-center justify-between">
+        <h3 class="text-sm font-bold text-ink">Active System Broadcast</h3>
+        <template x-if="activeBroadcast">
+          <span class="inline-flex items-center rounded-full bg-emerald-100 text-emerald-800 px-2 py-0.5 text-xs font-bold">
+            Live on Site
+          </span>
+        </template>
+      </div>
+
+      <template x-if="activeBroadcast">
+        <div class="rounded-xl border p-4 space-y-2"
+          :class="{
+            'bg-primary-soft border-primary/30': activeBroadcast.severity === 'info',
+            'bg-amber-50 border-amber-300': activeBroadcast.severity === 'warning',
+            'bg-red-50 border-red-300': activeBroadcast.severity === 'critical'
+          }"
+        >
+          <div class="flex items-center justify-between">
+            <p class="text-sm font-bold text-ink" x-text="activeBroadcast.title"></p>
+            <span class="text-xs font-semibold uppercase tracking-wider" x-text="activeBroadcast.severity"></span>
+          </div>
+          <p class="text-xs sm:text-sm text-ink leading-relaxed" x-text="activeBroadcast.message"></p>
+          <div class="flex items-center justify-between pt-2 border-t border-black/10 text-xs text-muted">
+            <span x-text="'Issued by ' + (activeBroadcast.created_by || 'Admin')"></span>
+            <button
+              type="button"
+              @click="dismissBroadcast()"
+              class="font-bold text-red-600 hover:text-red-800"
+            >
+              Clear / Deactivate Broadcast
+            </button>
           </div>
         </div>
       </template>
-    </div>
-  </section>
 
-  {# Accessible Escalation Action Modal #}
+      <template x-if="!activeBroadcast">
+        <p class="text-xs text-muted py-2">No active broadcast message. Use the form below to publish a notification to all users.</p>
+      </template>
+    </div>
+
+    {# Create Broadcast Form #}
+    <div class="rounded-card border border-border bg-surface p-5 shadow-card space-y-4">
+      <h3 class="text-sm font-bold text-primary-dark">Publish New Civic Broadcast</h3>
+      <form class="space-y-4" @submit.prevent="submitBroadcast()">
+        <div class="space-y-1.5">
+          <label class="block text-xs font-bold uppercase tracking-wider text-ink">Announcement Headline <span class="text-red-600">*</span></label>
+          <input
+            type="text"
+            x-model="broadcastTitle"
+            placeholder="e.g., Road Works on Kukatpally Y Junction Flyover"
+            required
+            class="block w-full rounded-xl border border-border bg-surface p-2.5 text-xs sm:text-sm text-ink focus:border-primary focus:outline-none"
+          />
+        </div>
+
+        <div class="space-y-1.5">
+          <label class="block text-xs font-bold uppercase tracking-wider text-ink">Advisory Details <span class="text-red-600">*</span></label>
+          <textarea
+            x-model="broadcastMessage"
+            rows="3"
+            placeholder="e.g., Repair crews dispatched for urgent water pipe resurfacing. Expect slow movement until 8 PM."
+            required
+            class="block w-full rounded-xl border border-border bg-surface p-2.5 text-xs sm:text-sm text-ink focus:border-primary focus:outline-none"
+          ></textarea>
+        </div>
+
+        <div class="space-y-1.5">
+          <label class="block text-xs font-bold uppercase tracking-wider text-ink">Severity Level</label>
+          <select
+            x-model="broadcastSeverity"
+            class="block w-full rounded-xl border border-border bg-surface p-2.5 text-xs sm:text-sm text-ink focus:border-primary focus:outline-none"
+          >
+            <option value="info">Informational (Blue)</option>
+            <option value="warning">Warning / Caution (Amber)</option>
+            <option value="critical">Critical / Emergency (Red)</option>
+          </select>
+        </div>
+
+        <button
+          type="submit"
+          :disabled="broadcastSubmitting || !broadcastTitle.trim() || !broadcastMessage.trim()"
+          class="inline-flex items-center justify-center rounded-full bg-primary px-5 py-2.5 text-xs font-bold text-white hover:bg-primary-dark disabled:opacity-50 transition-colors shadow-sm"
+        >
+          <span x-show="!broadcastSubmitting">Send Broadcast to Commuters &amp; Users</span>
+          <span x-show="broadcastSubmitting">Publishing...</span>
+        </button>
+      </form>
+    </div>
+  </div>
+
+  {# ========================================================================= #}
+  {# MODAL 1: Authoritative Resolution & Closure Modal                        #}
+  {# ========================================================================= #}
+  <div
+    id="sr-resolve-modal"
+    x-show="showResolveModal"
+    x-cloak
+    class="fixed inset-0 z-50 flex items-center justify-center p-4 sr-modal-backdrop"
+    @keydown.escape.window="closeResolveModal()"
+  >
+    <div
+      class="w-full max-w-lg rounded-card border border-border bg-surface p-6 shadow-2xl space-y-4"
+      @click.away="closeResolveModal()"
+      role="dialog"
+      aria-modal="true"
+    >
+      <div class="flex items-center justify-between border-b border-border pb-3">
+        <h3 class="text-lg font-bold text-emerald-800">
+          Mark Hazard Resolved &amp; Close Issue
+        </h3>
+        <button
+          type="button"
+          @click="closeResolveModal()"
+          class="text-muted hover:text-ink text-sm p-1 rounded-full"
+          aria-label="Close modal"
+        >
+          <svg class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" />
+          </svg>
+        </button>
+      </div>
+
+      <template x-if="activeResolveReport">
+        <div class="rounded-xl border border-border bg-canvas p-3 text-xs space-y-1">
+          <div class="flex items-center justify-between">
+            <span class="font-bold text-ink" x-text="categoryLabel(activeResolveReport.category)"></span>
+            <span class="font-bold text-ink" x-text="'Severity ' + activeResolveReport.severity_score + '/100'"></span>
+          </div>
+          <p class="text-muted truncate" x-text="activeResolveReport.description"></p>
+        </div>
+      </template>
+
+      <form class="space-y-4" @submit.prevent="submitResolution()">
+        <div class="space-y-1.5">
+          <label class="block text-xs font-bold uppercase tracking-wider text-ink">
+            Administrative Resolution Note <span class="text-red-600">*</span>
+          </label>
+          <textarea
+            x-model="resolutionNote"
+            rows="3"
+            maxlength="1000"
+            required
+            placeholder="e.g., Road crew completed cold-mix asphalt patching on November 23. Verified safe for traffic."
+            class="block w-full rounded-xl border border-border bg-surface p-2.5 text-xs sm:text-sm text-ink placeholder:text-muted focus:border-primary focus:outline-none"
+            :disabled="resolveSubmitting"
+          ></textarea>
+          <p class="text-[11px] text-muted">This note will be permanently recorded in the civic history and comments.</p>
+        </div>
+
+        <template x-if="resolveErrorMessage">
+          <div role="alert" class="rounded-xl border border-red-300 bg-red-50 p-3 text-xs text-red-900 flex items-center gap-2">
+            <span x-text="resolveErrorMessage"></span>
+          </div>
+        </template>
+
+        <div class="flex items-center justify-end gap-3 pt-3 border-t border-border">
+          <button
+            type="button"
+            @click="closeResolveModal()"
+            :disabled="resolveSubmitting"
+            class="rounded-full px-4 py-2 text-xs font-semibold text-muted hover:text-ink min-h-[38px]"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            :disabled="resolveSubmitting || !resolutionNote.trim()"
+            class="inline-flex items-center justify-center rounded-full bg-emerald-700 px-5 py-2 text-xs font-bold text-white hover:bg-emerald-800 disabled:opacity-50 transition-colors shadow-sm min-h-[38px]"
+          >
+            <span x-show="!resolveSubmitting">Confirm Resolution &amp; Close</span>
+            <span x-show="resolveSubmitting">Closing...</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  {# ========================================================================= #}
+  {# MODAL 2: Escalation to Road Authority Modal (Existing)                   #}
+  {# ========================================================================= #}
   <div
     id="sr-escalate-modal"
     x-show="showModal"
@@ -348,7 +679,6 @@
         </button>
       </div>
 
-      {# Active Report Summary #}
       <template x-if="activeReport">
         <div class="rounded-xl border border-border bg-canvas p-3 text-xs space-y-1">
           <div class="flex items-center justify-between">
@@ -360,9 +690,7 @@
         </div>
       </template>
 
-      {# Escalation Form #}
       <form class="space-y-4" @submit.prevent="submitEscalation()">
-        {# Authority Name Input #}
         <div class="space-y-1.5">
           <label for="sr-authority-input" class="block text-xs font-bold uppercase tracking-wider text-ink">
             Authority / Circle Name <span class="text-red-600">*</span>
@@ -380,7 +708,6 @@
           <p class="text-[11px] text-muted">Name of the official government agency or department assigned.</p>
         </div>
 
-        {# Escalation Note Input #}
         <div class="space-y-1.5">
           <label for="sr-note-input" class="block text-xs font-bold uppercase tracking-wider text-ink">
             Administrative Audit Note <span class="text-red-600">*</span>
@@ -398,7 +725,6 @@
           <p class="text-[11px] text-muted">Explain reason for escalation, work order number, or priority dispatch note.</p>
         </div>
 
-        {# Error Alert Box #}
         <template x-if="errorMessage">
           <div role="alert" class="rounded-xl border border-red-300 bg-red-50 p-3 text-xs text-red-900 flex items-center gap-2">
             <svg class="h-4 w-4 text-red-600 shrink-0" viewBox="0 0 20 20" fill="currentColor">
@@ -408,7 +734,6 @@
           </div>
         </template>
 
-        {# Form Actions #}
         <div class="flex items-center justify-end gap-3 pt-3 border-t border-border">
           <button
             type="button"

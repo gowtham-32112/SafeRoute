@@ -1,11 +1,13 @@
 /**
- * SafeRoute Admin Escalation Dashboard Controller (Issue #26)
+ * SafeRoute Admin Escalation & Municipal Management Controller
  *
  * Implements:
  * - Alpine component window.srAdminEscalations()
- * - Review queue of candidates flagged for escalation (confirm_count >= 5 OR severity_score >= 70)
- * - Accessible escalation modal with live authority name & note validation
- * - Live optimistic / real-time updates to KPI strip and tables without full-page reloads
+ * - Review queue of candidates flagged for escalation
+ * - Inspection of all reports across statuses (Open, Escalated, Fixed)
+ * - Authoritative "Resolve / Close Issue" modal with resolution note
+ * - Commuter role management (promote commuter to admin / demote)
+ * - Broadcast system notice publisher
  * - Zero innerHTML, safe DOM text bindings, and CSRF token transmission via X-CSRF-Token
  */
 
@@ -14,20 +16,39 @@
 
   window.srAdminEscalations = function () {
     return {
+      currentTab: "escalations", // "escalations", "all_reports", "commuters", "broadcast"
       candidates: [],
       recentEscalations: [],
+      allReports: [],
+      commuters: [],
+      reportStatusFilter: "all",
       pendingCount: 0,
       highSeverityCount: 0,
       totalEscalatedCount: 0,
       csrfToken: "",
 
-      // Modal state
+      // Escalation Modal state
       showModal: false,
       activeReport: null,
       authorityName: "",
       note: "",
       submitting: false,
       errorMessage: "",
+
+      // Resolution Modal state
+      showResolveModal: false,
+      activeResolveReport: null,
+      resolutionNote: "",
+      resolveSubmitting: false,
+      resolveErrorMessage: "",
+
+      // Broadcast form state
+      broadcastTitle: "",
+      broadcastMessage: "",
+      broadcastSeverity: "info",
+      broadcastSubmitting: false,
+      activeBroadcast: null,
+
       successToast: "",
       toastTimer: null,
 
@@ -54,10 +75,36 @@
           this.totalEscalatedCount = Number(initialData.total_escalated_count) || this.recentEscalations.length;
         }
 
+        const reportsEl = document.getElementById("sr-admin-all-reports-data");
+        if (reportsEl && reportsEl.textContent) {
+          try {
+            this.allReports = JSON.parse(reportsEl.textContent) || [];
+          } catch (_) {
+            this.allReports = [];
+          }
+        }
+
+        const commutersEl = document.getElementById("sr-admin-commuters-data");
+        if (commutersEl && commutersEl.textContent) {
+          try {
+            this.commuters = JSON.parse(commutersEl.textContent) || [];
+          } catch (_) {
+            this.commuters = [];
+          }
+        }
+
         const tokenEl = document.getElementById("sr-admin-csrf-token");
         if (tokenEl && tokenEl.value) {
           this.csrfToken = tokenEl.value;
         }
+
+        this.fetchActiveBroadcast();
+      },
+
+      filteredReports: function () {
+        if (!this.allReports || this.allReports.length === 0) return [];
+        if (this.reportStatusFilter === "all") return this.allReports;
+        return this.allReports.filter((r) => r.status === this.reportStatusFilter);
       },
 
       openModal: function (report) {
@@ -100,11 +147,11 @@
           return;
         }
         if (!trimmedNote) {
-          this.errorMessage = "Escalation note is required for audit trail.";
+          this.errorMessage = "A justification note is required for the municipal audit trail.";
           return;
         }
         if (trimmedNote.length > 1000) {
-          this.errorMessage = "Escalation note must be at most 1000 characters.";
+          this.errorMessage = "Justification note must be at most 1000 characters.";
           return;
         }
 
@@ -112,10 +159,8 @@
         this.errorMessage = "";
 
         const reportId = this.activeReport.id;
-        const targetUrl = "/reports/" + encodeURIComponent(reportId) + "/escalate";
-
         try {
-          const response = await fetch(targetUrl, {
+          const res = await fetch("/reports/" + encodeURIComponent(reportId) + "/escalate", {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
@@ -128,22 +173,23 @@
             }),
           });
 
-          let data = {};
-          try {
-            data = await response.json();
-          } catch (_) {
-            data = {};
-          }
-
-          if (!response.ok) {
-            const detail = data.detail || "Failed to record escalation. Please check inputs and retry.";
-            this.errorMessage = detail;
+          if (!res.ok) {
+            let errorDetail = "Failed to escalate hazard report.";
+            try {
+              const errJson = await res.json();
+              if (errJson && errJson.detail) {
+                errorDetail = errJson.detail;
+              }
+            } catch (_) {}
+            this.errorMessage = errorDetail;
+            this.submitting = false;
             return;
           }
 
-          // Live state update without page reload
+          const data = await res.json();
+
           const escalatedItem = {
-            id: data.escalation_id || "esc-" + Date.now(),
+            id: data.escalation_id,
             report_id: reportId,
             category: this.activeReport.category,
             description: this.activeReport.description,
@@ -166,12 +212,191 @@
             this.highSeverityCount = Math.max(0, this.highSeverityCount - 1);
           }
 
+          // Update status in allReports
+          const existingInAll = this.allReports.find((r) => r.id === reportId);
+          if (existingInAll) {
+            existingInAll.status = "escalated";
+          }
+
           this.showToast("Hazard escalated successfully to " + trimmedAuth + ".");
           this.closeModal();
         } catch (err) {
           this.errorMessage = "Network error: Unable to reach the server. Please verify your connection.";
         } finally {
           this.submitting = false;
+        }
+      },
+
+      openResolveModal: function (report) {
+        if (!report) return;
+        this.activeResolveReport = report;
+        this.resolutionNote = "";
+        this.resolveErrorMessage = "";
+        this.showResolveModal = true;
+      },
+
+      closeResolveModal: function () {
+        this.showResolveModal = false;
+        this.activeResolveReport = null;
+        this.resolutionNote = "";
+        this.resolveErrorMessage = "";
+        this.resolveSubmitting = false;
+      },
+
+      submitResolution: async function () {
+        if (!this.activeResolveReport) return;
+        const note = (this.resolutionNote || "").trim();
+        if (!note) {
+          this.resolveErrorMessage = "Please provide an administrative resolution note.";
+          return;
+        }
+
+        this.resolveSubmitting = true;
+        this.resolveErrorMessage = "";
+        const reportId = this.activeResolveReport.id;
+
+        try {
+          const res = await fetch("/admin/reports/" + encodeURIComponent(reportId) + "/resolve", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Accept: "application/json",
+              "X-CSRF-Token": this.csrfToken,
+            },
+            body: JSON.stringify({ resolution_note: note }),
+          });
+
+          if (!res.ok) {
+            let errorDetail = "Failed to resolve hazard report.";
+            try {
+              const errJson = await res.json();
+              if (errJson && errJson.detail) errorDetail = errJson.detail;
+            } catch (_) {}
+            this.resolveErrorMessage = errorDetail;
+            this.resolveSubmitting = false;
+            return;
+          }
+
+          // Update local models
+          const targetInAll = this.allReports.find((r) => r.id === reportId);
+          if (targetInAll) {
+            targetInAll.status = "fixed";
+            targetInAll.fixed_at = new Date().toISOString();
+          }
+
+          this.candidates = this.candidates.filter((c) => c.id !== reportId);
+          this.pendingCount = Math.max(0, this.pendingCount - 1);
+
+          this.showToast("Hazard marked as resolved & closed by Municipal Administration!");
+          this.closeResolveModal();
+        } catch (err) {
+          this.resolveErrorMessage = "Network error: Unable to reach the server.";
+        } finally {
+          this.resolveSubmitting = false;
+        }
+      },
+
+      updateUserRole: async function (userId, newRole) {
+        try {
+          const res = await fetch("/admin/users/" + encodeURIComponent(userId) + "/role", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Accept: "application/json",
+              "X-CSRF-Token": this.csrfToken,
+            },
+            body: JSON.stringify({ role: newRole }),
+          });
+
+          if (!res.ok) {
+            let msg = "Could not update role.";
+            try {
+              const err = await res.json();
+              if (err && err.detail) msg = err.detail;
+            } catch (_) {}
+            this.showToast("Error: " + msg);
+            return;
+          }
+
+          const updated = await res.json();
+          const target = this.commuters.find((u) => u.id === userId);
+          if (target) {
+            target.role = updated.role;
+          }
+          this.showToast(
+            updated.role === "admin"
+              ? "User successfully promoted to Municipal Admin!"
+              : "User role updated to Commuter."
+          );
+        } catch (err) {
+          this.showToast("Network error while updating user role.");
+        }
+      },
+
+      fetchActiveBroadcast: async function () {
+        try {
+          const res = await fetch("/api/broadcast", { headers: { Accept: "application/json" } });
+          if (res.ok) {
+            this.activeBroadcast = await res.json();
+          }
+        } catch (_) {}
+      },
+
+      submitBroadcast: async function () {
+        const title = (this.broadcastTitle || "").trim();
+        const msg = (this.broadcastMessage || "").trim();
+        if (!title || !msg) {
+          this.showToast("Broadcast requires both a title and a message.");
+          return;
+        }
+
+        this.broadcastSubmitting = true;
+        try {
+          const res = await fetch("/admin/broadcast", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Accept: "application/json",
+              "X-CSRF-Token": this.csrfToken,
+            },
+            body: JSON.stringify({
+              title: title,
+              message: msg,
+              severity: this.broadcastSeverity,
+            }),
+          });
+
+          if (!res.ok) {
+            this.showToast("Failed to publish broadcast.");
+            return;
+          }
+
+          this.activeBroadcast = await res.json();
+          this.broadcastTitle = "";
+          this.broadcastMessage = "";
+          this.showToast("Broadcast announcement sent to all commuters and users!");
+        } catch (err) {
+          this.showToast("Network error while sending broadcast.");
+        } finally {
+          this.broadcastSubmitting = false;
+        }
+      },
+
+      dismissBroadcast: async function () {
+        try {
+          const res = await fetch("/admin/broadcast", {
+            method: "DELETE",
+            headers: {
+              Accept: "application/json",
+              "X-CSRF-Token": this.csrfToken,
+            },
+          });
+          if (res.ok) {
+            this.activeBroadcast = null;
+            this.showToast("Active broadcast announcement cleared.");
+          }
+        } catch (err) {
+          this.showToast("Network error while clearing broadcast.");
         }
       },
 

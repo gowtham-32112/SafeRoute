@@ -825,3 +825,50 @@ def test_bearer_api_logout_without_csrf_and_csrf_token_cannot_authenticate():
             },
         )
         assert r_csrf_as_bearer.status_code == 401
+
+
+def test_token_cache_and_logout_eviction():
+    from app.services.auth import (
+        AuthenticatedUser,
+        _TOKEN_CACHE,
+        clear_token_cache,
+        get_authenticated_user_from_token,
+        logout_session,
+    )
+
+    clear_token_cache()
+    assert len(_TOKEN_CACHE) == 0
+
+    dummy_user = AuthenticatedUser(
+        id="user-123",
+        email="test@example.com",
+        role="user",
+        full_name="Tester",
+        is_admin=False,
+    )
+
+    with patch("app.services.auth.get_supabase_client") as mock_get_client, patch(
+        "app.services.auth._fetch_trusted_profile", return_value=dummy_user
+    ) as mock_fetch:
+        mock_client = MagicMock()
+        mock_user = MagicMock()
+        mock_user.id = "user-123"
+        mock_user.email = "test@example.com"
+        mock_user_resp = MagicMock(user=mock_user)
+        mock_client.auth.get_user.return_value = mock_user_resp
+        mock_get_client.return_value = mock_client
+
+        # First lookup hits the remote client and populates cache
+        u1 = get_authenticated_user_from_token("jwt-cache-test-token")
+        assert u1.id == "user-123"
+        assert mock_fetch.call_count == 1
+        assert "jwt-cache-test-token" in _TOKEN_CACHE
+
+        # Second lookup returns cached object immediately without remote calls
+        u2 = get_authenticated_user_from_token("jwt-cache-test-token")
+        assert u2 is u1
+        assert mock_fetch.call_count == 1
+
+        # Logout evicts from cache
+        logout_session("jwt-cache-test-token")
+        assert "jwt-cache-test-token" not in _TOKEN_CACHE

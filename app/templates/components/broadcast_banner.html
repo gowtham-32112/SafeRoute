@@ -1,0 +1,72 @@
+{# SafeRoute System Broadcast Announcement Banner
+   Displays civic announcements and road advisories issued by Municipal Admin to Commuters & Users.
+#}
+
+<aside
+  id="sr-broadcast-banner"
+  aria-label="Civic Announcement"
+  x-data="{
+    broadcast: null,
+    dismissed: false,
+    async init() {
+      try {
+        const res = await fetch('/api/broadcast', { headers: { 'Accept': 'application/json' } });
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.title) {
+            this.broadcast = data;
+          }
+        }
+      } catch (err) {
+        // Silent fail on network error
+      }
+    }
+  }"
+  x-show="broadcast && !dismissed"
+  x-cloak
+  class="relative border-b transition-all duration-200"
+  :class="{
+    'bg-primary-soft border-primary/30 text-ink': broadcast?.severity === 'info',
+    'bg-amber-50 border-amber-300 text-amber-950': broadcast?.severity === 'warning',
+    'bg-red-50 border-red-300 text-red-950': broadcast?.severity === 'critical'
+  }"
+>
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex items-start sm:items-center justify-between gap-3">
+    <div class="flex items-start sm:items-center gap-3 min-w-0">
+      <span
+        class="inline-flex h-8 w-8 items-center justify-center rounded-xl shrink-0 text-white"
+        :class="{
+          'bg-primary': broadcast?.severity === 'info',
+          'bg-amber-600': broadcast?.severity === 'warning',
+          'bg-red-600': broadcast?.severity === 'critical'
+        }"
+        aria-hidden="true"
+      >
+        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+          <line x1="12" y1="9" x2="12" y2="13"></line>
+          <line x1="12" y1="17" x2="12.01" y2="17"></line>
+        </svg>
+      </span>
+      <div class="text-xs sm:text-sm">
+        <span class="font-bold tracking-tight" x-text="broadcast?.title"></span>
+        <span class="mx-1.5 text-muted hidden sm:inline">&bull;</span>
+        <span class="font-normal leading-relaxed" x-text="broadcast?.message"></span>
+        <span class="text-[11px] text-muted block sm:inline sm:ml-2">
+          (Issued by <span class="font-medium" x-text="broadcast?.created_by || 'Municipal Admin'"></span>)
+        </span>
+      </div>
+    </div>
+    <button
+      type="button"
+      @click="dismissed = true"
+      class="inline-flex p-1.5 rounded-lg text-muted hover:text-ink hover:bg-black/5 transition-colors shrink-0"
+      aria-label="Dismiss announcement"
+    >
+      <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="18" y1="6" x2="6" y2="18"></line>
+        <line x1="6" y1="6" x2="18" y2="18"></line>
+      </svg>
+    </button>
+  </div>
+</aside>
