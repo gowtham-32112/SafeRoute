@@ -183,7 +183,7 @@ def answer_commuter_query(
         try:
             url = (
                 f"https://generativelanguage.googleapis.com/v1beta/models/"
-                f"{cfg.GEMINI_MODEL}:generateContent?key={cfg.GEMINI_API_KEY}"
+                f"{cfg.GEMINI_MODEL}:generateContent"
             )
             prompt_text = (
                 f"You are SafeRoute AI, a helpful community road-safety assistant for the Kukatpally area.\n"
@@ -200,7 +200,7 @@ def answer_commuter_query(
                 "generationConfig": {"temperature": 0.2, "maxOutputTokens": 300},
             }
             with httpx.Client(timeout=6.0) as client:
-                res = client.post(url, json=payload)
+                res = client.post(url, json=payload, headers={"x-goog-api-key": cfg.GEMINI_API_KEY})
                 if res.status_code == 200:
                     data = res.json()
                     candidates = data.get("candidates", [])
