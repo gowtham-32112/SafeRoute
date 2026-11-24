@@ -148,7 +148,7 @@ async def suggest_hazard_category(
 
     # 2. Prepare Gemini Vision API request
     model_name = (app_settings.VISION_AI_MODEL or "gemini-2.5-flash").strip()
-    endpoint = f"{GEMINI_API_BASE_URL}/{model_name}:generateContent?key={api_key}"
+    endpoint = f"{GEMINI_API_BASE_URL}/{model_name}:generateContent"
 
     b64_image = base64.b64encode(processed.content).decode("ascii")
 
@@ -198,7 +198,7 @@ async def suggest_hazard_category(
             resp = await client.post(
                 endpoint,
                 json=request_payload,
-                headers={"Content-Type": "application/json"},
+                headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
             )
 
         if resp.status_code != 200:
