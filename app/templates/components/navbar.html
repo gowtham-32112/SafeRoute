@@ -19,6 +19,7 @@
 {%- set nav_items = [] -%}
 {%- if is_authenticated -%}
   {%- set _ = nav_items.append({'key': 'map', 'label': 'Map', 'href': '/map', 'active': nav_key == 'map' or current_path == '/map' or current_path.startswith('/map/')}) -%}
+  {%- set _ = nav_items.append({'key': 'live-issues', 'label': 'Live Issues', 'href': '/live-issues', 'active': nav_key == 'live-issues' or current_path == '/live-issues'}) -%}
   {%- set _ = nav_items.append({'key': 'report', 'label': 'Report', 'href': '/reports/new', 'active': nav_key == 'report' or current_path.startswith('/reports')}) -%}
   {%- set _ = nav_items.append({'key': 'routes', 'label': 'Routes', 'href': '/routes', 'active': nav_key == 'routes' or current_path.startswith('/routes')}) -%}
   {%- set _ = nav_items.append({'key': 'analytics', 'label': 'Analytics', 'href': '/analytics', 'active': nav_key == 'analytics' or current_path.startswith('/analytics')}) -%}

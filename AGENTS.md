@@ -109,7 +109,7 @@ Do NOT alter, replace, or add alternatives to this stack:
   - Enabled on ALL tables (`profiles`, `hazard_reports`, `report_images`, `verifications`, `comments`, `escalations`, `status_history`).
   - Anonymous users cannot read or write data.
   - Authenticated users can view reports, images, comments, and create their own reports/votes/comments.
-  - Users can ONLY edit or delete their own open reports.
+  - Commuters may create and vote on reports, but only admins can update or delete reports.
   - Only `admin` role can insert into `escalations`, update report status to `escalated`, or override statuses.
 - **Database Integrity**:
   - Prevent self-voting: Users cannot vote on their own reports (enforced by trigger/RLS and API validation).

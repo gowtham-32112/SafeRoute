@@ -14,9 +14,10 @@ SafeRoute is a collaborative civic web platform where citizens report and verify
 2. **AI-Assisted Classification (`POST /reports/suggest-category`)**: Fast multimodal vision AI analyzes uploaded road photos and recommends categories (`pothole`, `road_break`, `streetlight`, `footpath`, `other`) with confidence ratings and fallback safety.
 3. **Interactive Map & Live Updates (`/map`)**: Real-time Leaflet visualization with marker clustering, category and status filter chips, and Supabase Realtime synchronization.
 4. **Community Verification & Voting (`/reports/{id}`)**: Peer verification (`confirm`, `dispute`, `vote fixed`), civic comments, severity evolution, and the automatic 2-vote fixed resolution rule.
-5. **Hazard-Aware Route Planning (`/routes`)**: OSRM routing integration intersecting known road hazards within a 25-metre buffer, computing hazard-weighted route risk scores and recommending the safest travel corridors.
-6. **Civic Safety Analytics (`/analytics`)**: Regional hazard hotspots, interactive Leaflet heatmaps, top 5 affected zones, category/status charts, and an "Exclude seed data" toggle.
-7. **Municipal Escalation Management (`/admin/escalations`)**: Administrative dashboard allowing civic authorities to prioritize and escalate critical hazards to municipal bodies (GHMC, HMDA, TSSPDCL).
+5. **Live Issues (`/live-issues`)**: Authenticated commuters can browse open and closed reports with photos, confirm or dispute open reports, and read admin broadcasts. Only admins can edit or delete reports.
+6. **Hazard-Aware Route Planning (`/routes`)**: OSRM routing integration intersecting known road hazards within a 25-metre buffer, computing hazard-weighted route risk scores and recommending the safest travel corridors.
+7. **Civic Safety Analytics (`/analytics`)**: Regional hazard hotspots, interactive Leaflet heatmaps, top 5 affected zones, category/status charts, and an "Exclude seed data" toggle.
+8. **Municipal Escalation Management (`/admin/escalations`)**: Administrative dashboard allowing civic authorities to prioritize and escalate critical hazards to municipal bodies (GHMC, HMDA, TSSPDCL), and publish commuter broadcasts.
 
 ---
 
@@ -78,6 +79,8 @@ To initialize the PostgreSQL + PostGIS database in Supabase (or any standard Pos
 3. **`supabase/triggers.sql`**: Deploys automated scoring logic, role escalation guards, self-vote prevention, status history logging, and the 2-vote fixed threshold trigger.
 4. **`supabase/policies.sql`**: Enables and enforces Row-Level Security (RLS) on all tables and Storage bucket access rules.
 5. **`supabase/seed.sql`**: Seeds deterministic demo accounts (admin and citizens), 20 realistic Kukatpally corridor hazard reports (`is_seed = true`), photos, verifications, comments, and municipal escalations.
+
+For an existing installation, apply `supabase/migrations/20261124_admin_only_hazard_report_edits.sql` after the schema and policies. It removes commuter update/delete access to hazard reports so only admins can edit or delete them.
 
 ---
 

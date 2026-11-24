@@ -39,7 +39,7 @@ SafeRoute is a community road-hazard **awareness** platform. Registered users re
 | Vote "fixed" with optional after photo | Yes | Yes |
 | Comment | Yes | Yes |
 | Plan routes, see analytics | Yes | Yes |
-| Edit or delete own open report | Yes | Yes |
+| Edit or delete a report | No | Yes |
 | See Escalations page, mark Escalated, add authority name and note | No | Yes |
 | Override any status, delete any report | No | Yes |
 
@@ -55,10 +55,13 @@ SafeRoute is a community road-hazard **awareness** platform. Registered users re
 | `/login`, `/signup` | Auth forms | Public |
 | `/map` | Main app: live map, filters, side list | User |
 | `/reports/new` | Report form | User |
+| `/live-issues` | Browse open/closed reports, photos, community votes, and admin broadcasts | User |
 | `/reports/{id}` | Report detail: photos, severity breakdown, votes, comments, timeline | User |
 | `/routes` | Route planner | User |
 | `/analytics` | Hotspots and stats | User |
 | `/admin/escalations` | Escalation list and actions | Admin |
+
+On `/live-issues`, commuters can read reports and vote to confirm or dispute open reports. Only admins can update or delete reports. Admin broadcasts are shown in the page's broadcast section and refreshed while the page is open.
 
 *After login, users go straight to `/map`.*
 
@@ -138,7 +141,7 @@ Enable first: `CREATE EXTENSION IF NOT EXISTS postgis;`
 
 ### Row Level Security (RLS)
 - Anonymous users read nothing. Authenticated users read all reports, images, comments.
-- Users insert reports, votes, comments as themselves and edit or delete only their own open reports.
+- Users insert reports, votes, and comments as themselves. Only admins may update or delete reports.
 - Only admin can write `escalations`, set `status = 'escalated'`, override statuses or delete others' reports.
 
 ---

@@ -122,7 +122,7 @@ All 4 policies on `storage.objects` are scoped exclusively to `bucket_id = 'haza
   ALTER TABLE public.hazard_reports
       ADD COLUMN IF NOT EXISTS hide_reporter_name BOOLEAN NOT NULL DEFAULT FALSE;
   ```
-  - Keep `reporter_id` populated internally so ownership checks, RLS edit/delete rules, and anti-self-voting triggers continue functioning cleanly.
+  - Keep `reporter_id` populated internally so ownership checks and anti-self-voting triggers continue functioning cleanly. Report edits and deletions are restricted to admins by the current RLS policies.
   - Mask the displayed reporter name in FastAPI responses/templates (or an explicit view/RPC projection) whenever `hide_reporter_name = TRUE`.
 - **Status**: **Unresolved — awaiting project owner decision before Stage 5/6.**
 

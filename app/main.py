@@ -25,6 +25,7 @@ from app.routers.admin import router as admin_router
 from app.routers.routes import router as routes_router
 from app.routers.analytics import router as analytics_router
 from app.routers.ai import router as ai_router
+from app.routers.live_issues import router as live_issues_router
 from app.services.admin import AdminServiceError
 from app.services.auth import AuthenticatedUser, AuthError
 from app.services.community import CommunityServiceError
@@ -330,6 +331,7 @@ app.include_router(admin_router)
 app.include_router(routes_router)
 app.include_router(analytics_router)
 app.include_router(ai_router)
+app.include_router(live_issues_router)
 
 
 def _copy_set_cookie_headers(source: Response, target: Response) -> None:

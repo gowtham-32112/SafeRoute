@@ -128,19 +128,9 @@ CREATE POLICY hazard_reports_insert_admin
     TO authenticated
     WITH CHECK (public.is_admin());
 
+-- Issue content and status are moderator-managed. Commuters can submit and vote,
+-- but cannot update reports through direct PostgREST calls.
 DROP POLICY IF EXISTS hazard_reports_update_own_open ON public.hazard_reports;
-CREATE POLICY hazard_reports_update_own_open
-    ON public.hazard_reports
-    FOR UPDATE
-    TO authenticated
-    USING (
-        reporter_id = auth.uid()
-        AND status = 'open'
-    )
-    WITH CHECK (
-        reporter_id = auth.uid()
-        AND status = 'open'
-    );
 
 DROP POLICY IF EXISTS hazard_reports_update_admin ON public.hazard_reports;
 CREATE POLICY hazard_reports_update_admin
@@ -151,14 +141,6 @@ CREATE POLICY hazard_reports_update_admin
     WITH CHECK (public.is_admin());
 
 DROP POLICY IF EXISTS hazard_reports_delete_own_open ON public.hazard_reports;
-CREATE POLICY hazard_reports_delete_own_open
-    ON public.hazard_reports
-    FOR DELETE
-    TO authenticated
-    USING (
-        reporter_id = auth.uid()
-        AND status = 'open'
-    );
 
 DROP POLICY IF EXISTS hazard_reports_delete_admin ON public.hazard_reports;
 CREATE POLICY hazard_reports_delete_admin
