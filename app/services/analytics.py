@@ -28,6 +28,11 @@ from app.services.supabase_client import create_authenticated_supabase_client
 
 logger = logging.getLogger(__name__)
 
+
+class AnalyticsServiceError(Exception):
+    """Raised when hazard data cannot be fetched for analytics."""
+
+
 APPROVED_CATEGORIES = ("pothole", "road_break", "streetlight", "footpath", "other")
 APPROVED_STATUSES = ("open", "escalated", "fixed")
 
@@ -343,7 +348,7 @@ async def get_hazard_analytics(
         resp = query.execute()
         raw_rows = _extract_supabase_data(resp) or []
     except Exception as exc:
-        logger.warning("Failed to query hazard_reports for analytics: %s", exc)
-        raw_rows = []
+        logger.warning("Failed to query hazard_reports for analytics: %s", type(exc).__name__)
+        raise AnalyticsServiceError("Analytics data is temporarily unavailable.") from exc
 
     return compute_analytics(raw_rows, exclude_seed=exclude_seed)
