@@ -6,6 +6,7 @@ Endpoints:
 - GET /api/analytics: Authenticated JSON API endpoint supporting exclude_seed query param.
 """
 
+import logging
 from pathlib import Path
 from typing import Optional
 
@@ -22,6 +23,7 @@ from app.deps import (
     get_settings,
 )
 from app.services.analytics import (
+    AnalyticsServiceError,
     AnalyticsResponse,
     get_hazard_analytics,
 )
@@ -29,6 +31,7 @@ from app.services.session import issue_csrf_cookie
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Analytics"])
 
@@ -62,11 +65,17 @@ async def analytics_page(
     """Render the authenticated analytics dashboard with KPIs, heatmap, and charts."""
     csrf_token, csrf_carrier = _prepare_page_csrf(request, app_settings)
 
-    initial_analytics = await get_hazard_analytics(
-        access_token=auth_ctx.access_token,
-        app_settings=app_settings,
-        exclude_seed=exclude_seed,
-    )
+    try:
+        initial_analytics = await get_hazard_analytics(
+            access_token=auth_ctx.access_token,
+            app_settings=app_settings,
+            exclude_seed=exclude_seed,
+        )
+    except AnalyticsServiceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Analytics data is temporarily unavailable. Please try again shortly.",
+        ) from exc
 
     map_config = {
         "fallbackLat": app_settings.DEFAULT_MAP_LAT,
@@ -113,8 +122,14 @@ async def api_get_analytics(
             status_code=status.HTTP_200_OK,
             content=analytics.model_dump(),
         )
-    except Exception as exc:
+    except AnalyticsServiceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Analytics data is temporarily unavailable. Please try again shortly.",
+        ) from exc
+    except Exception:
+        logger.exception("Unexpected failure while computing analytics.")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to compute analytics: {str(exc)}",
+            detail="Failed to compute analytics.",
         )

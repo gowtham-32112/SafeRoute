@@ -10,6 +10,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import ValidationError
+from starlette.concurrency import run_in_threadpool
 
 from app.config import Settings
 from app.deps import AuthenticatedContext, get_authenticated_context, get_settings
@@ -45,7 +46,8 @@ async def commuter_ai_assistant_endpoint(
             detail="Invalid query payload. Please provide a non-empty query string.",
         ) from exc
 
-    return answer_commuter_query(
+    return await run_in_threadpool(
+        answer_commuter_query,
         query=payload.query,
         access_token=ctx.access_token,
         app_settings=app_settings,

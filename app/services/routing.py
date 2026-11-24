@@ -335,7 +335,7 @@ async def plan_hazard_aware_routes(
                     route_hazards_raw = data
             except Exception as rpc_err:
                 logger.warning("hazards_near_route RPC failed for route %s: %s", r.get("id"), rpc_err)
-                route_hazards_raw = []
+                raise RoutingError("Hazard data is temporarily unavailable.") from rpc_err
 
         # 3. Calculate route risk and score
         route_risk, enriched_hazards = calculate_route_risk(route_hazards_raw)

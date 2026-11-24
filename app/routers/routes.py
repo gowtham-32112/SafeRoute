@@ -10,6 +10,7 @@ Endpoints:
 - POST /routes/plan: Alias endpoint for backwards compatibility.
 """
 
+import logging
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -30,6 +31,7 @@ from app.deps import (
 from app.services.routing import (
     ROUTE_SAFETY_DISCLAIMER,
     RankedRoute,
+    RoutingError,
     RoutePlanResponse,
     plan_hazard_aware_routes,
 )
@@ -39,6 +41,7 @@ ROUTE_SAFETY_DISCLAIMER: str = "Routes are ranked using community-reported hazar
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Routes"])
 
@@ -205,8 +208,14 @@ async def api_plan_routes(
             buffer_meters=app_settings.ROUTE_HAZARD_BUFFER_METERS,
         )
         return JSONResponse(status_code=status.HTTP_200_OK, content=plan_result.model_dump())
-    except Exception as exc:
+    except RoutingError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Route hazard data is temporarily unavailable. Please try again shortly.",
+        ) from exc
+    except Exception:
+        logger.exception("Unexpected failure while planning routes.")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to plan routes: {str(exc)}",
+            detail="Failed to plan routes.",
         )
