@@ -167,6 +167,12 @@ def cast_hazard_vote(
     if not report_row or not isinstance(report_row, dict):
         raise CommunityServiceError("Hazard report not found.", status_code=404)
 
+    if str(report_row.get("status") or "open").strip().lower() == "fixed":
+        raise CommunityServiceError(
+            "Closed issues no longer accept votes.",
+            status_code=409,
+        )
+
     reporter_id = report_row.get("reporter_id")
     if reporter_id and str(reporter_id) == str(user_id):
         raise CommunityServiceError(
