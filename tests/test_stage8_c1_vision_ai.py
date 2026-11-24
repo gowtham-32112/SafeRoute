@@ -247,6 +247,10 @@ def test_suggest_category_gemini_success_returns_category(mock_post):
             files={"image": ("pothole.jpg", image_bytes, "image/jpeg")},
         )
         assert response.status_code == 200
+        request_url = mock_post.call_args.args[0]
+        request_headers = mock_post.call_args.kwargs["headers"]
+        assert "key=" not in request_url
+        assert request_headers["x-goog-api-key"] == "test-api-key"
         data = response.json()
         assert data["category"] == "pothole"
         assert data["confidence"] == 0.94
