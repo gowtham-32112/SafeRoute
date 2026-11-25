@@ -222,4 +222,3 @@ def test_commuter_ai_uses_configured_gemini_model():
     request_url = client_factory.return_value.__enter__.return_value.post.call_args.args[0]
     assert request_url.endswith("/gemini-test-model:generateContent")
     assert result.reply == "Grounded answer."
-

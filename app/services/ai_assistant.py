@@ -230,4 +230,3 @@ def answer_commuter_query(
         suggested_actions=suggestions,
         stats=ctx,
     )
-
