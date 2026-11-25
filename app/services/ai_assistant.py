@@ -183,7 +183,7 @@ def answer_commuter_query(
         try:
             url = (
                 f"https://generativelanguage.googleapis.com/v1beta/models/"
-                f"{cfg.GEMINI_MODEL}:generateContent"
+                f"{cfg.VISION_AI_MODEL}:generateContent"
             )
             prompt_text = (
                 f"You are SafeRoute AI, a helpful community road-safety assistant for the Kukatpally area.\n"
@@ -230,3 +230,4 @@ def answer_commuter_query(
         suggested_actions=suggestions,
         stats=ctx,
     )
+

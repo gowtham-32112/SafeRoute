@@ -10,6 +10,7 @@ from app.config import Settings
 from app.deps import AuthenticatedContext, get_authenticated_context, get_settings, require_admin_context, require_csrf
 from app.main import app
 from app.services.auth import AuthenticatedUser
+from app.services.ai_assistant import answer_commuter_query
 from app.services.broadcast import clear_broadcast, get_active_broadcast, set_broadcast
 
 ADMIN_USER = AuthenticatedUser(
@@ -197,3 +198,28 @@ def test_commuter_civic_ai_assistant():
             assert len(res["suggested_actions"]) > 0
         finally:
             app.dependency_overrides.clear()
+
+
+def test_commuter_ai_uses_configured_gemini_model():
+    settings = Settings(
+        SUPABASE_URL="https://test.supabase.co",
+        SUPABASE_ANON_KEY="dummy-anon-key",
+        GEMINI_API_KEY="test-gemini-key",
+        VISION_AI_MODEL="gemini-test-model",
+    )
+    response = MagicMock(status_code=200)
+    response.json.return_value = {
+        "candidates": [{"content": {"parts": [{"text": "Grounded answer."}]}}]
+    }
+
+    with patch("app.services.ai_assistant._get_live_civic_context", return_value={}), patch(
+        "app.services.ai_assistant.httpx.Client"
+    ) as client_factory:
+        client_factory.return_value.__enter__.return_value.post.return_value = response
+
+        result = answer_commuter_query("Summarize the reports", "test-token", settings)
+
+    request_url = client_factory.return_value.__enter__.return_value.post.call_args.args[0]
+    assert request_url.endswith("/gemini-test-model:generateContent")
+    assert result.reply == "Grounded answer."
+
