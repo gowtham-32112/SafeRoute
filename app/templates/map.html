@@ -472,18 +472,18 @@
   {# Full-Height Interactive Leaflet Map Region #}
   <section
     aria-label="Interactive road hazard map"
-    class="relative flex-1 min-h-0 h-full w-full"
+    class="relative flex-1 min-h-0 h-full w-full overflow-hidden"
   >
     <div
       id="saferoute-map"
       role="region"
       aria-label="SafeRoute interactive map"
       tabindex="0"
-      class="sr-map-canvas"
+      class="sr-map-canvas absolute inset-0 w-full h-full"
     ></div>
 
-    {# Floating Accessible "Re-centre on me" Control on Map Canvas #}
-    <div class="absolute bottom-24 right-3 sm:right-4 lg:bottom-6 lg:right-6 z-[450]">
+    {# Floating Accessible "Re-centre on me" Control on Map Canvas (Positioned above Civic AI button) #}
+    <div class="absolute bottom-24 right-4 sm:right-6 lg:bottom-24 lg:right-6 z-[450]">
       <button
         id="sr-recenter-btn"
         type="button"

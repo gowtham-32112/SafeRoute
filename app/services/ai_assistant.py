@@ -16,7 +16,10 @@ from pydantic import BaseModel, Field
 
 from app.config import Settings, settings
 from app.services.analytics import compute_analytics
-from app.services.supabase_client import create_authenticated_supabase_client
+from app.services.supabase_client import (
+    create_authenticated_supabase_client,
+    get_supabase_client,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -41,9 +44,13 @@ def _get_live_civic_context(
 ) -> Dict[str, Any]:
     """Retrieve verified aggregated database statistics to ground the AI bot."""
     cfg = app_settings or settings
-    client = create_authenticated_supabase_client(access_token, cfg)
     rows: list[dict[str, Any]] = []
     try:
+        if access_token and access_token.strip():
+            client = create_authenticated_supabase_client(access_token, cfg)
+        else:
+            client = get_supabase_client(cfg)
+
         resp = (
             client.table("hazard_reports")
             .select(
@@ -179,7 +186,8 @@ def answer_commuter_query(
     ctx = _get_live_civic_context(access_token, cfg)
 
     # If Gemini API key is configured, synthesize via Gemini using the live stats
-    if cfg.GEMINI_API_KEY and not cfg.GEMINI_API_KEY.startswith("demo_"):
+    active_key = cfg.active_vision_api_key
+    if active_key and not active_key.startswith("demo_"):
         try:
             url = (
                 f"https://generativelanguage.googleapis.com/v1beta/models/"
@@ -203,7 +211,7 @@ def answer_commuter_query(
                 res = client.post(
                     url,
                     json=payload,
-                    headers={"x-goog-api-key": cfg.GEMINI_API_KEY},
+                    headers={"x-goog-api-key": active_key},
                 )
                 if res.status_code == 200:
                     data = res.json()

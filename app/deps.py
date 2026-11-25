@@ -165,6 +165,22 @@ async def get_authenticated_context(
     )
 
 
+async def get_optional_authenticated_context(
+    request: Request,
+    response: Response,
+    app_settings: Settings = Depends(get_settings),
+) -> Optional[AuthenticatedContext]:
+    """Return AuthenticatedContext if session is active, or None if anonymous/expired."""
+    user, active_token, stale_cookie = _resolve_user_from_request(
+        request, response, app_settings
+    )
+    if stale_cookie:
+        clear_session_cookies(response, app_settings)
+    if user is not None and active_token:
+        return AuthenticatedContext(user=user, access_token=active_token)
+    return None
+
+
 async def get_current_user(
     ctx: AuthenticatedContext = Depends(get_authenticated_context),
 ) -> AuthenticatedUser:

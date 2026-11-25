@@ -13,7 +13,11 @@ from pydantic import ValidationError
 from starlette.concurrency import run_in_threadpool
 
 from app.config import Settings
-from app.deps import AuthenticatedContext, get_authenticated_context, get_settings
+from app.deps import (
+    AuthenticatedContext,
+    get_optional_authenticated_context,
+    get_settings,
+)
 from app.services.ai_assistant import (
     AiAssistantRequest,
     AiAssistantResponse,
@@ -33,7 +37,7 @@ router = APIRouter(prefix="/api/ai", tags=["AI"])
 )
 async def commuter_ai_assistant_endpoint(
     request: Request,
-    ctx: AuthenticatedContext = Depends(get_authenticated_context),
+    ctx: Optional[AuthenticatedContext] = Depends(get_optional_authenticated_context),
     app_settings: Settings = Depends(get_settings),
 ) -> AiAssistantResponse:
     """Answer commuter questions regarding live road issues and resolution stats."""
@@ -46,9 +50,10 @@ async def commuter_ai_assistant_endpoint(
             detail="Invalid query payload. Please provide a non-empty query string.",
         ) from exc
 
+    access_token = ctx.access_token if ctx else ""
     return await run_in_threadpool(
         answer_commuter_query,
         query=payload.query,
-        access_token=ctx.access_token,
+        access_token=access_token,
         app_settings=app_settings,
     )

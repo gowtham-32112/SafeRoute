@@ -185,14 +185,23 @@ body {
   isolation: isolate;
   position: relative;
   z-index: 0;
+  width: 100%;
   height: calc(100vh - 4rem);
   height: calc(100dvh - 4rem);
+  min-height: 0;
+  overflow: hidden;
 }
 
 .sr-map-canvas {
   width: 100%;
   height: 100%;
   background-color: var(--sr-primary-soft);
+}
+
+/* Ensure Leaflet controls stay cleanly contained below navbar (z-[1200]) and popups */
+.sr-map-workspace .leaflet-top,
+.sr-map-workspace .leaflet-bottom {
+  z-index: 500 !important;
 }
 
 .sr-user-location-marker {

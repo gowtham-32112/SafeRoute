@@ -152,7 +152,8 @@ async def stream_hazard_updates(
             callback=_on_change,
         )
         await channel.subscribe()
-        listen_task = asyncio.create_task(rt_client.listen())
+        if hasattr(rt_client, "listen"):
+            listen_task = asyncio.create_task(rt_client.listen())
 
         # Suggest client reconnect interval and confirm connected state
         yield "retry: 5000\n"
@@ -161,7 +162,17 @@ async def stream_hazard_updates(
         while True:
             if await is_disconnected():
                 break
-            if listen_task.done():
+
+            # Check if underlying Realtime WebSocket closed or crashed
+            internal_task = getattr(rt_client, "_listen_task", None)
+            if isinstance(internal_task, asyncio.Task):
+                if internal_task.done():
+                    yield format_sse_message(
+                        "reconnect",
+                        {"detail": "Realtime stream closed; reconnecting."},
+                    )
+                    break
+            elif listen_task is not None and listen_task.done():
                 yield format_sse_message(
                     "reconnect",
                     {"detail": "Realtime stream closed; reconnecting."},
